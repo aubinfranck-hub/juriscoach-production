@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JurisCoach - Legal Guidance AI</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; }
+    .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+    header { text-align: center; padding: 40px 0; }
+    h1 { font-size: 2.5em; color: #1a365d; margin-bottom: 10px; }
+    .subtitle { color: #4a5568; font-size: 1.1em; }
+    .card { background: white; border-radius: 10px; padding: 30px; margin: 20px 0; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    label { display: block; margin: 15px 0 5px; font-weight: 600; color: #1a365d; }
+    select, textarea { width: 100%; padding: 10px; border: 2px solid #e2e8f0; border-radius: 5px; font-size: 1em; }
+    textarea { min-height: 100px; font-family: inherit; }
+    select:focus, textarea:focus { outline: none; border-color: #2c5282; }
+    button { width: 100%; padding: 12px; background: #2c5282; color: white; border: none; border-radius: 5px; font-size: 1.1em; cursor: pointer; margin-top: 20px; }
+    button:hover { background: #1a365d; }
+    .result { background: #edf2f7; padding: 20px; border-radius: 8px; margin-top: 20px; border-left: 4px solid #2c5282; }
+    .result h3 { color: #1a365d; margin-bottom: 10px; }
+    .result p { color: #2d3748; line-height: 1.8; margin: 10px 0; }
+    .loading { display: none; text-align: center; color: #2c5282; }
+    .error { color: #c53030; padding: 10px; background: #fed7d7; border-radius: 5px; }
+    .info-box { background: #c6f6d5; padding: 10px; border-radius: 5px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>?? JurisCoach</h1>
+      <p class="subtitle">AI Legal Guidance for Ivorian Law</p>
+    </header>
+
+    <div class="card">
+      <h2>Legal Consultation</h2>
+      <label for="caseType">Case Type:</label>
+      <select id="caseType">
+        <option value="criminal">Criminal Law</option>
+        <option value="commercial">Commercial Law (OHADA)</option>
+        <option value="family">Family Law</option>
+        <option value="labor">Labor Law</option>
+      </select>
+
+      <label for="question">Your Question:</label>
+      <textarea id="question" placeholder="Describe your legal situation..."></textarea>
+
+      <div class="loading" id="loading">Consulting...</div>
+      <button onclick="consultLegal()">Get Legal Advice</button>
+    </div>
+
+    <div id="resultContainer"></div>
+  </div>
+
+  <script>
+    const API_URL = window.location.origin;
+
+    async function consultLegal() {
+      const caseType = document.getElementById("caseType").value;
+      const question = document.getElementById("question").value;
+      const loading = document.getElementById("loading");
+      const resultContainer = document.getElementById("resultContainer");
+
+      if (!question.trim()) {
+        resultContainer.innerHTML = `<div class="card result error">?? Please enter your question</div>`;
+        return;
+      }
+
+      loading.style.display = "block";
+      resultContainer.innerHTML = "";
+
+      try {
+        const response = await fetch(`${API_URL}/api/juriscoach/consult`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question, caseType })
+        });
+
+        if (!response.ok) throw new Error("API error");
+        
+        const data = await response.json();
+        
+        let html = `<div class="card result">
+          <h3>?? Legal Guidance</h3>
+          <p><strong>Case Type:</strong> ${caseType}</p>
+          <p><strong>Your Question:</strong> ${data.question}</p>
+          <div class="info-box">
+            <p><strong>Legal Basis:</strong> ${data.legalBasis}</p>
+            <p><strong>Advice:</strong> ${data.suggestion}</p>
+            <p><strong>Estimated Cost:</strong> ${data.estimatedCost}</p>
+            <p><strong>Timeline:</strong> ${data.timeline}</p>
+          </div>
+          <p style="color: #e53e3e; margin-top: 15px; font-weight: 600;">?? Disclaimer: This is informational only. Consult a licensed lawyer for official legal advice.</p>
+        </div>`;
+        
+        resultContainer.innerHTML = html;
+      } catch (error) {
+        resultContainer.innerHTML = `<div class="card result error">? Error: ${error.message}</div>`;
+      } finally {
+        loading.style.display = "none";
+      }
+    }
+  </script>
+</body>
+</html>
