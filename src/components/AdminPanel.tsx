@@ -32,6 +32,13 @@ export default function AdminPanel({ token }: { token: string }) {
   const [extractingImage, setExtractingImage] = useState(false);
   const [imageExtractResult, setImageExtractResult] = useState<string | null>(null);
   const imageFileInputRef = React.useRef<HTMLInputElement>(null);
+  const textFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleTextFileImport = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => setExtractText((reader.result as string) || "");
+    reader.readAsText(file, "utf-8");
+  };
 
   const handleExtractFromImage = (file: File) => {
     if (!imageSourceTitle.trim()) {
@@ -215,6 +222,16 @@ export default function AdminPanel({ token }: { token: string }) {
               <option value="AFFAIRES">Affaires</option>
             </select>
           </div>
+          <input
+            ref={textFileInputRef} type="file" accept=".txt,text/plain" className="hidden"
+            onChange={(e) => e.target.files?.[0] && handleTextFileImport(e.target.files[0])}
+          />
+          <button
+            type="button" onClick={() => textFileInputRef.current?.click()}
+            className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2.5 rounded-xl cursor-pointer"
+          >
+            📄 Importer un fichier .txt (au lieu de coller à la main)
+          </button>
           <textarea
             required placeholder="Collez ici le texte brut de la loi (jusqu'à ~45 000 caractères par envoi)..."
             value={extractText} onChange={(e) => setExtractText(e.target.value)}
