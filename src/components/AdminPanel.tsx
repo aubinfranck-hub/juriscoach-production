@@ -27,6 +27,38 @@ export default function AdminPanel({ token }: { token: string }) {
   const [extracting, setExtracting] = useState(false);
   const [extractResult, setExtractResult] = useState<string | null>(null);
 
+  const [imageSourceTitle, setImageSourceTitle] = useState("");
+  const [imageDomain, setImageDomain] = useState("PENAL");
+  const [extractingImage, setExtractingImage] = useState(false);
+  const [imageExtractResult, setImageExtractResult] = useState<string | null>(null);
+  const imageFileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleExtractFromImage = (file: File) => {
+    if (!imageSourceTitle.trim()) {
+      setImageExtractResult("Indiquez d'abord le titre de la source.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      setExtractingImage(true);
+      setImageExtractResult(null);
+      try {
+        const res = await fetch("/api/admin/extract-from-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ imageBase64: reader.result, sourceTitle: imageSourceTitle, domain: imageDomain }),
+        });
+        const data = await res.json();
+        setImageExtractResult(data.message || "Échec.");
+      } catch {
+        setImageExtractResult("Erreur réseau.");
+      } finally {
+        setExtractingImage(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   const handleExtract = async (e: React.FormEvent) => {
     e.preventDefault();
     setExtracting(true);
@@ -196,6 +228,37 @@ export default function AdminPanel({ token }: { token: string }) {
           </button>
         </form>
         {extractResult && <p className="text-xs text-slate-400 mt-2.5">{extractResult}</p>}
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">
+          <BookOpen className="w-3.5 h-3.5" /> Extraction depuis une photo/scan (OCR NVIDIA)
+        </h3>
+        <p className="text-[11px] text-slate-500 mb-3">
+          Prenez une photo d'une page de loi (ou un scan) — Nemotron Parse (NVIDIA) lit le texte, puis Gemini structure les articles automatiquement.
+        </p>
+        <div className="flex gap-2 mb-2.5">
+          <input
+            type="text" placeholder="Titre de la source" value={imageSourceTitle} onChange={(e) => setImageSourceTitle(e.target.value)}
+            className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"
+          />
+          <select value={imageDomain} onChange={(e) => setImageDomain(e.target.value)}
+            className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2.5 text-xs text-white">
+            <option value="PENAL">Pénal</option>
+            <option value="AFFAIRES">Affaires</option>
+          </select>
+        </div>
+        <input
+          ref={imageFileInputRef} type="file" accept="image/*" className="hidden"
+          onChange={(e) => e.target.files?.[0] && handleExtractFromImage(e.target.files[0])}
+        />
+        <button
+          type="button" onClick={() => imageFileInputRef.current?.click()} disabled={extractingImage}
+          className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+        >
+          {extractingImage ? "Extraction en cours (OCR + IA, peut prendre 30-60s)..." : "Choisir une photo de page"}
+        </button>
+        {imageExtractResult && <p className="text-xs text-slate-400 mt-2.5">{imageExtractResult}</p>}
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">

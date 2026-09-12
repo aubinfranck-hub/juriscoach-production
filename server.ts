@@ -903,34 +903,25 @@ app.post("/api/admin/seed-ohada-data", requireAdminAuth, async (req, res) => {
 // --- Extraction automatique d'articles depuis un texte brut (au lieu de les taper à la main) ---
 // L'admin colle un extrait de texte de loi (Code pénal, acte uniforme OHADA, etc.) — Gemini
 // repère et structure TOUS les articles qu'il contient, puis on les enregistre directement.
-app.post("/api/admin/extract-articles", requireAdminAuth, async (req, res) => {
-  const { rawText, sourceTitle, domain, organization, country, reference } = req.body;
-  if (!rawText || rawText.trim().length < 50) {
-    return res.status(400).json({ success: false, message: "Texte trop court ou manquant." });
+async function extractAndStoreArticles(
+  rawText: string, sourceTitle: string, domain: string, organization?: string, country?: string, reference?: string
+): Promise<{ inserted: number; skipped: number; totalDetected: number }> {
+  let sourceId: number;
+  const existing = await pool!.query("SELECT id FROM legal_sources WHERE title = $1", [sourceTitle]);
+  if (existing.rows.length > 0) {
+    sourceId = existing.rows[0].id;
+  } else {
+    const created = await pool!.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ($1,$2,$3,'CODE',$4,$5,'ACTIVE') RETURNING id`,
+      [country || "CI", organization || "République de Côte d'Ivoire", domain, sourceTitle, reference || ""]
+    );
+    sourceId = created.rows[0].id;
   }
-  if (!sourceTitle || !domain) {
-    return res.status(400).json({ success: false, message: "Titre de la source et domaine (PENAL/AFFAIRES) requis." });
-  }
-  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
 
-  try {
-    // Trouve ou crée la source correspondante
-    let sourceId: number;
-    const existing = await pool.query("SELECT id FROM legal_sources WHERE title = $1", [sourceTitle]);
-    if (existing.rows.length > 0) {
-      sourceId = existing.rows[0].id;
-    } else {
-      const created = await pool.query(
-        `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
-         VALUES ($1,$2,$3,'CODE',$4,$5,'ACTIVE') RETURNING id`,
-        [country || "CI", organization || "République de Côte d'Ivoire", domain, sourceTitle, reference || ""]
-      );
-      sourceId = created.rows[0].id;
-    }
-
-    const response = await getAIClient().models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: `Voici un extrait BRUT d'un texte de loi (peut contenir des artefacts de scan/OCR à ignorer). Repère CHAQUE article de loi présent dans cet extrait et structure-le. N'invente RIEN : si une information n'est pas présente dans le texte, laisse le champ vide ou null plutôt que de deviner.
+  const response = await getAIClient().models.generateContent({
+    model: "gemini-3.5-flash",
+    contents: `Voici un extrait BRUT d'un texte de loi (peut contenir des artefacts de scan/OCR à ignorer). Repère CHAQUE article de loi présent dans cet extrait et structure-le. N'invente RIEN : si une information n'est pas présente dans le texte, laisse le champ vide ou null plutôt que de deviner.
 
 RÈGLES:
 - Un "article" = une disposition numérotée (Art. X, Article X)
@@ -945,34 +936,104 @@ ${rawText.slice(0, 45000)}
 """
 
 Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"...","official_text":"...","min_sentence_years":null,"max_sentence_years":null,"fine_min_fcfa":null,"fine_max_fcfa":null,"conditions":"..."}]}`,
-      config: { responseMimeType: "application/json" },
-    });
+    config: { responseMimeType: "application/json" },
+  });
 
-    const parsed = JSON.parse(response.text || "{}");
-    const articles = parsed.articles || [];
+  const parsed = JSON.parse(response.text || "{}");
+  const articles = parsed.articles || [];
 
-    let inserted = 0;
-    let skipped = 0;
-    for (const art of articles) {
-      if (!art.article_number || !art.official_text) continue;
-      const dup = await pool.query(
-        "SELECT id FROM legal_articles WHERE source_id = $1 AND article_number = $2",
-        [sourceId, art.article_number]
-      );
-      if (dup.rows.length > 0) { skipped++; continue; }
-      await pool.query(
-        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
-         art.min_sentence_years || null, art.max_sentence_years || null, art.fine_min_fcfa || null, art.fine_max_fcfa || null,
-         art.conditions || "", `${art.title || ""} ${art.official_text}`]
-      );
-      inserted++;
-    }
+  let inserted = 0;
+  let skipped = 0;
+  for (const art of articles) {
+    if (!art.article_number || !art.official_text) continue;
+    const dup = await pool!.query(
+      "SELECT id FROM legal_articles WHERE source_id = $1 AND article_number = $2",
+      [sourceId, art.article_number]
+    );
+    if (dup.rows.length > 0) { skipped++; continue; }
+    await pool!.query(
+      `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
+       art.min_sentence_years || null, art.max_sentence_years || null, art.fine_min_fcfa || null, art.fine_max_fcfa || null,
+       art.conditions || "", `${art.title || ""} ${art.official_text}`]
+    );
+    inserted++;
+  }
+  return { inserted, skipped, totalDetected: articles.length };
+}
 
-    res.json({ success: true, message: `${inserted} article(s) extrait(s) et enregistré(s), ${skipped} déjà présent(s) (ignoré(s)).`, inserted, skipped, totalDetected: articles.length });
+app.post("/api/admin/extract-articles", requireAdminAuth, async (req, res) => {
+  const { rawText, sourceTitle, domain, organization, country, reference } = req.body;
+  if (!rawText || rawText.trim().length < 50) {
+    return res.status(400).json({ success: false, message: "Texte trop court ou manquant." });
+  }
+  if (!sourceTitle || !domain) {
+    return res.status(400).json({ success: false, message: "Titre de la source et domaine (PENAL/AFFAIRES) requis." });
+  }
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+
+  try {
+    const result = await extractAndStoreArticles(rawText, sourceTitle, domain, organization, country, reference);
+    res.json({ success: true, message: `${result.inserted} article(s) extrait(s) et enregistré(s), ${result.skipped} déjà présent(s) (ignoré(s)).`, ...result });
   } catch (err: any) {
     console.error("[Extract] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'extraction : " + err.message });
+  }
+});
+
+// --- Extraction depuis une IMAGE de page (scan/photo) via NVIDIA Nemotron Parse (OCR
+// spécialisé documents), puis même pipeline Gemini de structuration des articles ---
+app.post("/api/admin/extract-from-image", requireAdminAuth, async (req, res) => {
+  const { imageBase64, sourceTitle, domain, organization, country, reference } = req.body;
+  if (!imageBase64) return res.status(400).json({ success: false, message: "Image requise." });
+  if (!sourceTitle || !domain) {
+    return res.status(400).json({ success: false, message: "Titre de la source et domaine (PENAL/AFFAIRES) requis." });
+  }
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  if (!process.env.NVIDIA_API_KEY) {
+    return res.status(400).json({ success: false, message: "NVIDIA_API_KEY non configurée sur le serveur." });
+  }
+
+  try {
+    const nvidiaRes = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.NVIDIA_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "nvidia/nemotron-parse-v1.2",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "</s><s><predict_bbox><predict_classes><output_markdown><predict_no_text_in_pic>" },
+            { type: "image_url", image_url: { url: imageBase64 } },
+          ],
+        }],
+        temperature: 0.0,
+        repetition_penalty: 1.1,
+      }),
+    });
+    if (!nvidiaRes.ok) {
+      const errText = await nvidiaRes.text();
+      throw new Error(`NVIDIA API a répondu ${nvidiaRes.status}: ${errText.slice(0, 200)}`);
+    }
+    const nvidiaData: any = await nvidiaRes.json();
+    const extractedText = nvidiaData.choices?.[0]?.message?.content || "";
+    if (!extractedText || extractedText.trim().length < 50) {
+      return res.json({ success: false, message: "Aucun texte exploitable extrait de l'image." });
+    }
+
+    const result = await extractAndStoreArticles(extractedText, sourceTitle, domain, organization, country, reference);
+    res.json({
+      success: true,
+      message: `OCR: ${extractedText.length} caractères extraits. ${result.inserted} article(s) enregistré(s), ${result.skipped} déjà présent(s).`,
+      ocrPreview: extractedText.slice(0, 300),
+      ...result,
+    });
+  } catch (err: any) {
+    console.error("[Extract image] Échec:", err.message);
     res.status(500).json({ success: false, message: "Échec de l'extraction : " + err.message });
   }
 });
