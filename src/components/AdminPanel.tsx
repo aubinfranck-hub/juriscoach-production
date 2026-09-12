@@ -17,6 +17,8 @@ export default function AdminPanel({ token }: { token: string }) {
   const [resetInfo, setResetInfo] = useState<{ phone: string; password: string } | null>(null);
   const [seedingPenal, setSeedingPenal] = useState(false);
   const [seedingOhada, setSeedingOhada] = useState(false);
+  const [seedingPenal2, setSeedingPenal2] = useState(false);
+  const [seedingOhadaSuretes, setSeedingOhadaSuretes] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
 
   const handleSeed = async (endpoint: string, setLoading: (v: boolean) => void) => {
@@ -114,6 +116,22 @@ export default function AdminPanel({ token }: { token: string }) {
             className="flex-1 flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
           >
             <Scale className="w-3.5 h-3.5" /> {seedingOhada ? "..." : "Alimenter droit OHADA"}
+          </button>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-2.5 mt-2.5">
+          <button
+            onClick={() => handleSeed("/api/admin/seed-legal-data-2", setSeedingPenal2)}
+            disabled={seedingPenal2}
+            className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+          >
+            <Scale className="w-3.5 h-3.5" /> {seedingPenal2 ? "..." : "Code pénal (lot 2 : coups/voie de fait)"}
+          </button>
+          <button
+            onClick={() => handleSeed("/api/admin/seed-ohada-suretes", setSeedingOhadaSuretes)}
+            disabled={seedingOhadaSuretes}
+            className="flex-1 flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+          >
+            <Scale className="w-3.5 h-3.5" /> {seedingOhadaSuretes ? "..." : "OHADA : Sûretés"}
           </button>
         </div>
         {seedResult && <p className="text-xs text-slate-400 mt-2.5">{seedResult}</p>}

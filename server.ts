@@ -899,6 +899,93 @@ app.post("/api/admin/seed-ohada-data", requireAdminAuth, async (req, res) => {
   }
 });
 
+// --- Deuxième lot Code pénal (coups et blessures, voie de fait) ---
+app.post("/api/admin/seed-legal-data-2", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: exist } = await pool.query("SELECT COUNT(*) FROM legal_articles WHERE article_number = 'Art. 345'");
+    if (Number(exist[0].count) > 0) return res.json({ success: true, message: "Lot 2 déjà présent.", skipped: true });
+
+    const { rows: srcRows } = await pool.query("SELECT id FROM legal_sources WHERE title = 'Code pénal ivoirien' LIMIT 1");
+    const sourceId = srcRows[0]?.id;
+    if (!sourceId) return res.status(400).json({ success: false, message: "Alimentez d'abord le Code pénal (lot 1)." });
+
+    const articles = [
+      {
+        article_number: "Art. 345", title: "Coups et blessures volontaires",
+        official_text: "Quiconque, volontairement, porte des coups ou fait des blessures ou commet toute autre violence ou voie de fait est puni. L'emprisonnement est de cinq à vingt ans lorsque les coups portés et les blessures faites, même sans intention de donner la mort, l'ont pourtant occasionnée. La peine est d'un emprisonnement de cinq à dix ans et d'une amende de 50.000 à 500.000 francs lorsque les violences ont occasionné une mutilation, amputation ou privation de l'usage d'un membre, la cécité ou la perte d'un œil ou toute autre infirmité permanente.",
+        infraction: "Coups et blessures volontaires",
+        min_sentence_years: 5, max_sentence_years: 20, fine_min_fcfa: 50000, fine_max_fcfa: 500000,
+        prescription_years: 10, procedure_type: "Tribunal correctionnel ou criminel selon la gravité",
+        conditions: "Coups ou blessures volontaires\nGravité graduée selon le résultat (décès non intentionnel, mutilation, infirmité permanente)",
+      },
+      {
+        article_number: "Art. 382", title: "Voie de fait",
+        official_text: "Constitue une voie de fait, le fait d'exercer volontairement sur une personne une violence ou tout autre acte qui ne constitue aucun coup ni n'occasionne aucune blessure, mais est de nature à impressionner la victime ou à lui causer un trouble. Est puni d'un emprisonnement de quinze jours à six mois et d'une amende de 100.000 à 1.000.000 de francs, quiconque commet une voie de fait.",
+        infraction: "Voie de fait",
+        min_sentence_years: 0, max_sentence_years: 1, fine_min_fcfa: 100000, fine_max_fcfa: 1000000,
+        prescription_years: 3, procedure_type: "Tribunal correctionnel",
+        conditions: "Violence ou acte intentionnel\nAbsence de coup ou blessure physique\nEffet d'impression ou de trouble sur la victime",
+      },
+    ];
+
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, prescription_years, procedure_type, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,'PENAL',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [sourceId, art.article_number, art.title, art.official_text, art.infraction, art.min_sentence_years,
+         art.max_sentence_years, art.fine_min_fcfa, art.fine_max_fcfa, art.prescription_years, art.procedure_type,
+         art.conditions, `${art.title} ${art.official_text}`]
+      );
+    }
+    res.json({ success: true, message: `${articles.length} article(s) ajoutés (coups et blessures, voie de fait).` });
+  } catch (err: any) {
+    console.error("[Seed 2] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'alimentation." });
+  }
+});
+
+// --- Acte OHADA supplémentaire : sûretés ---
+app.post("/api/admin/seed-ohada-suretes", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: exist } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title LIKE '%sûretés%'");
+    if (Number(exist[0].count) > 0) return res.json({ success: true, message: "Acte sûretés déjà présent.", skipped: true });
+
+    const { rows: sourceRows } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('OHADA', 'OHADA', 'AFFAIRES', 'ACTE_UNIFORME', 'Acte uniforme portant organisation des sûretés (AUS)', 'Adopté le 15 décembre 2010, entré en vigueur le 15 mai 2011', 'ACTIVE')
+       RETURNING id`
+    );
+    const sourceId = sourceRows[0].id;
+
+    const articles = [
+      {
+        article_number: "Art. 1", title: "Définition de la sûreté",
+        official_text: "Une sûreté est l'affectation au bénéfice d'un créancier d'un bien, d'un ensemble de biens ou d'un patrimoine afin de garantir l'exécution d'une obligation ou d'un ensemble d'obligations, quelle que soit la nature juridique de celles-ci et notamment qu'elles soient présentes ou futures, déterminées ou déterminables, conditionnelles ou inconditionnelles.",
+        conditions: "Affectation d'un bien/patrimoine au bénéfice d'un créancier\nGarantie d'une ou plusieurs obligations, présentes ou futures",
+      },
+      {
+        article_number: "Art. 3", title: "Débiteur professionnel",
+        official_text: "Est considéré comme débiteur professionnel au sens du présent Acte uniforme, tout débiteur dont la dette est née dans l'exercice de sa profession ou se trouve en rapport direct avec l'une de ses activités professionnelles, même si celle-ci n'est pas principale.",
+        conditions: "Dette née dans l'exercice de la profession, OU\nRapport direct avec une activité professionnelle (même non principale)",
+      },
+    ];
+
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,'AFFAIRES',$5,$6,$7)`,
+        [sourceId, art.article_number, art.title, art.official_text, art.title, art.conditions, `${art.title} ${art.official_text}`]
+      );
+    }
+    res.json({ success: true, message: `${articles.length} article(s) ajoutés (Acte uniforme sûretés).` });
+  } catch (err: any) {
+    console.error("[Seed OHADA sûretés] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'alimentation." });
+  }
+});
+
 app.post("/api/documents/generate", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { dossier_id, document_type, recipient_name, recipient_address, facts_summary, amount_claimed_fcfa, deadline_days } = req.body;
