@@ -811,6 +811,94 @@ app.post("/api/admin/seed-legal-data", requireAdminAuth, async (req, res) => {
   }
 });
 
+// --- Alimentation droit des affaires OHADA (admin uniquement) ---
+// 3 actes uniformes, 2 articles clés verifiés chacun (droit commercial général, sociétés
+// commerciales et GIE, recouvrement de créances). Même principe que le Code pénal : contenu
+// de démarrage réel et vérifié par recoupement de sources, à faire valider par un juriste.
+app.post("/api/admin/seed-ohada-data", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE organization = 'OHADA'");
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Droit OHADA déjà alimenté — aucune action.", skipped: true });
+    }
+
+    const actes = [
+      {
+        title: "Acte uniforme relatif au droit commercial général (AUDCG)",
+        reference: "Adopté le 15 décembre 2010 à Lomé",
+        articles: [
+          {
+            article_number: "Art. 2", title: "Définition du commerçant",
+            official_text: "Est commerçant celui qui fait de l'accomplissement d'actes de commerce par nature sa profession.",
+            conditions: "Accomplissement d'actes de commerce par nature\nCaractère professionnel et habituel de cette activité",
+          },
+          {
+            article_number: "Art. 101", title: "Résiliation judiciaire du bail commercial",
+            official_text: "En cas d'inexécution de l'une quelconque de ses obligations par le preneur, le bailleur pourra demander la résiliation judiciaire du bail après avoir fait délivrer, par acte extrajudiciaire, une mise en demeure lui indiquant que faute d'exécuter ses obligations dans le délai d'un mois il encourt la résiliation judiciaire. Le bailleur doit informer les créanciers inscrits de sa demande de résiliation et le jugement ne peut intervenir avant un mois au moins suivant cette notification.",
+            conditions: "Inexécution d'une obligation par le locataire (preneur)\nMise en demeure préalable par acte extrajudiciaire, délai d'un mois\nInformation des créanciers inscrits\nDélai d'un mois avant jugement",
+          },
+        ],
+      },
+      {
+        title: "Acte uniforme relatif au droit des sociétés commerciales et du GIE (AUSCGIE)",
+        reference: "Version révisée, J.O. OHADA du 04 février 2014",
+        articles: [
+          {
+            article_number: "Art. 4", title: "Définition de la société commerciale",
+            official_text: "La société commerciale est créée par deux (2) ou plusieurs personnes qui conviennent, par un contrat, d'affecter à une activité des biens en numéraire ou en nature, ou de l'industrie, dans le but de partager le bénéfice ou de profiter de l'économie qui peut en résulter. Les associés s'engagent à contribuer aux pertes dans les conditions prévues par le présent Acte uniforme. La société commerciale est créée dans l'intérêt commun des associés.",
+            conditions: "Deux personnes ou plus (sauf société unipersonnelle prévue par ailleurs)\nContrat d'apport (numéraire, nature ou industrie)\nBut de partage du bénéfice ou de l'économie\nEngagement de contribuer aux pertes",
+          },
+          {
+            article_number: "Art. 19-21", title: "Objet social",
+            official_text: "Toute société a un objet qui est constitué par l'activité qu'elle entreprend et qui doit être déterminée et décrite dans ses statuts. Toute société doit avoir un objet licite. Lorsque l'activité exercée par la société est réglementée, la société doit se conformer aux règles particulières auxquelles ladite activité est soumise.",
+            conditions: "Objet déterminé et décrit dans les statuts\nLicéité de l'objet\nConformité aux règles particulières si activité réglementée",
+          },
+        ],
+      },
+      {
+        title: "Acte uniforme portant organisation des procédures simplifiées de recouvrement et des voies d'exécution (AUPSRVE)",
+        reference: "Adopté le 10 avril 1998 à Libreville",
+        articles: [
+          {
+            article_number: "Art. 1", title: "Injonction de payer — principe",
+            official_text: "Le recouvrement d'une créance certaine, liquide et exigible peut être demandé suivant la procédure d'injonction de payer.",
+            conditions: "Créance certaine (existence non contestable)\nCréance liquide (montant déterminé)\nCréance exigible (échéance passée)",
+          },
+          {
+            article_number: "Art. 2", title: "Injonction de payer — conditions d'origine de la créance",
+            official_text: "La procédure d'injonction de payer peut être introduite lorsque : 1) la créance a une cause contractuelle ; 2) l'engagement résulte de l'émission ou de l'acceptation de tout effet de commerce, ou d'un chèque dont la provision s'est révélée inexistante ou insuffisante.",
+            conditions: "Cause contractuelle de la créance, OU\nEffet de commerce (lettre de change, billet à ordre) émis/accepté, OU\nChèque sans provision suffisante",
+          },
+        ],
+      },
+    ];
+
+    let totalArticles = 0;
+    for (const acte of actes) {
+      const { rows: sourceRows } = await pool.query(
+        `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+         VALUES ('OHADA', 'OHADA', 'AFFAIRES', 'ACTE_UNIFORME', $1, $2, 'ACTIVE') RETURNING id`,
+        [acte.title, acte.reference]
+      );
+      const sourceId = sourceRows[0].id;
+      for (const art of acte.articles) {
+        await pool.query(
+          `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions, searchable_text)
+           VALUES ($1,$2,$3,$4,'AFFAIRES',$5,$6,$7)`,
+          [sourceId, art.article_number, art.title, art.official_text, art.title, art.conditions, `${art.title} ${art.official_text}`]
+        );
+        totalArticles++;
+      }
+    }
+
+    res.json({ success: true, message: `${totalArticles} article(s) OHADA ajoutés sous ${actes.length} actes uniformes.` });
+  } catch (err: any) {
+    console.error("[Seed OHADA] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'alimentation." });
+  }
+});
+
 app.post("/api/documents/generate", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { dossier_id, document_type, recipient_name, recipient_address, facts_summary, amount_claimed_fcfa, deadline_days } = req.body;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { UserPlus, Users } from "lucide-react";
+import { UserPlus, Users, BookOpen, Scale } from "lucide-react";
 
 interface Account {
   phone: string;
@@ -15,6 +15,23 @@ export default function AdminPanel({ token }: { token: string }) {
   const [createdInfo, setCreatedInfo] = useState<{ phone: string; password: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [resetInfo, setResetInfo] = useState<{ phone: string; password: string } | null>(null);
+  const [seedingPenal, setSeedingPenal] = useState(false);
+  const [seedingOhada, setSeedingOhada] = useState(false);
+  const [seedResult, setSeedResult] = useState<string | null>(null);
+
+  const handleSeed = async (endpoint: string, setLoading: (v: boolean) => void) => {
+    setLoading(true);
+    setSeedResult(null);
+    try {
+      const res = await fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setSeedResult(data.message || (data.success ? "Terminé." : "Échec."));
+    } catch {
+      setSeedResult("Erreur réseau.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const generatePassword = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -78,6 +95,29 @@ export default function AdminPanel({ token }: { token: string }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
       <h2 className="text-2xl font-display font-bold text-white">Administration</h2>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">
+          <BookOpen className="w-3.5 h-3.5" /> Base juridique
+        </h3>
+        <div className="flex flex-col sm:flex-row gap-2.5">
+          <button
+            onClick={() => handleSeed("/api/admin/seed-legal-data", setSeedingPenal)}
+            disabled={seedingPenal}
+            className="flex-1 flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+          >
+            <Scale className="w-3.5 h-3.5" /> {seedingPenal ? "..." : "Alimenter Code pénal CI"}
+          </button>
+          <button
+            onClick={() => handleSeed("/api/admin/seed-ohada-data", setSeedingOhada)}
+            disabled={seedingOhada}
+            className="flex-1 flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+          >
+            <Scale className="w-3.5 h-3.5" /> {seedingOhada ? "..." : "Alimenter droit OHADA"}
+          </button>
+        </div>
+        {seedResult && <p className="text-xs text-slate-400 mt-2.5">{seedResult}</p>}
+      </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
         <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">
