@@ -305,6 +305,14 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_generated_dossier ON generated_documents(dossier_id);
   `);
 
+  // Index unique séparé (pas dans le bloc principal) : si des doublons existent déjà en base,
+  // cette création échoue seule sans jamais empêcher le reste du serveur de démarrer.
+  try {
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_source_number ON legal_articles(source_id, article_number)`);
+  } catch (err: any) {
+    console.warn("[DB] Index unique articles non créé (doublons probables) :", err.message);
+  }
+
   const accountsRes = await pool.query("SELECT * FROM accounts");
   for (const row of accountsRes.rows) {
     const cleanPhone = normalizePhone(row.phone);
@@ -952,26 +960,31 @@ Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"..
     return Number.isFinite(n) ? Math.round(n) : null;
   };
 
-  for (const art of articles) {
-    if (!art.article_number || !art.official_text) continue;
-    try {
-      const dup = await pool!.query(
-        "SELECT id FROM legal_articles WHERE source_id = $1 AND article_number = $2",
-        [sourceId, art.article_number]
-      );
-      if (dup.rows.length > 0) { skipped++; continue; }
-      await pool!.query(
-        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
-         toSafeInt(art.min_sentence_years), toSafeInt(art.max_sentence_years),
-         toSafeInt(art.fine_min_fcfa), toSafeInt(art.fine_max_fcfa),
-         art.conditions || "", `${art.title || ""} ${art.official_text}`]
-      );
-      inserted++;
-    } catch (articleErr: any) {
-      // Un article problématique ne doit jamais faire échouer tout le lot.
-      console.error(`[Extract] Article ${art.article_number} ignoré (${articleErr.message})`);
+  // Toutes les insertions en parallèle (upsert en une seule requête chacune grâce à l'index
+  // unique) au lieu d'un aller-retour SELECT puis INSERT, séquentiel, par article — beaucoup
+  // plus rapide sur un lot de 15-20 articles, ce qui réduit le risque de dépassement de délai
+  // réseau côté téléphone.
+  const results = await Promise.allSettled(
+    articles
+      .filter((art: any) => art.article_number && art.official_text)
+      .map((art: any) =>
+        pool!.query(
+          `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+           ON CONFLICT (source_id, article_number) DO NOTHING
+           RETURNING id`,
+          [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
+           toSafeInt(art.min_sentence_years), toSafeInt(art.max_sentence_years),
+           toSafeInt(art.fine_min_fcfa), toSafeInt(art.fine_max_fcfa),
+           art.conditions || "", `${art.title || ""} ${art.official_text}`]
+        )
+      )
+  );
+  for (const r of results) {
+    if (r.status === "fulfilled") {
+      if (r.value.rows.length > 0) inserted++; else skipped++; // conflit ignoré (déjà présent)
+    } else {
+      console.error("[Extract] Article ignoré:", r.reason?.message);
       skipped++;
     }
   }

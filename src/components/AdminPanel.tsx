@@ -79,8 +79,9 @@ export default function AdminPanel({ token }: { token: string }) {
       const data = await res.json();
       setExtractResult(data.message || "Échec.");
       if (data.success) setExtractText("");
-    } catch {
-      setExtractResult("Erreur réseau.");
+    } catch (err: any) {
+      // Message précis au lieu de "Erreur réseau" générique, pour diagnostiquer sans aller-retour.
+      setExtractResult(`Échec réseau : ${err?.message || err?.name || "cause inconnue"}. Vérifiez la connexion et réessayez.`);
     } finally {
       setExtracting(false);
     }
