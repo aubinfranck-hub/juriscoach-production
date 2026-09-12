@@ -944,21 +944,36 @@ Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"..
 
   let inserted = 0;
   let skipped = 0;
+  // Nettoie une valeur numérique vers un entier sûr pour la colonne INTEGER (Gemini renvoie
+  // parfois des décimaux, ex: 0.5 an pour "six mois" — on arrondit plutôt que de planter).
+  const toSafeInt = (v: any): number | null => {
+    if (v === null || v === undefined || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.round(n) : null;
+  };
+
   for (const art of articles) {
     if (!art.article_number || !art.official_text) continue;
-    const dup = await pool!.query(
-      "SELECT id FROM legal_articles WHERE source_id = $1 AND article_number = $2",
-      [sourceId, art.article_number]
-    );
-    if (dup.rows.length > 0) { skipped++; continue; }
-    await pool!.query(
-      `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
-       art.min_sentence_years || null, art.max_sentence_years || null, art.fine_min_fcfa || null, art.fine_max_fcfa || null,
-       art.conditions || "", `${art.title || ""} ${art.official_text}`]
-    );
-    inserted++;
+    try {
+      const dup = await pool!.query(
+        "SELECT id FROM legal_articles WHERE source_id = $1 AND article_number = $2",
+        [sourceId, art.article_number]
+      );
+      if (dup.rows.length > 0) { skipped++; continue; }
+      await pool!.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
+         toSafeInt(art.min_sentence_years), toSafeInt(art.max_sentence_years),
+         toSafeInt(art.fine_min_fcfa), toSafeInt(art.fine_max_fcfa),
+         art.conditions || "", `${art.title || ""} ${art.official_text}`]
+      );
+      inserted++;
+    } catch (articleErr: any) {
+      // Un article problématique ne doit jamais faire échouer tout le lot.
+      console.error(`[Extract] Article ${art.article_number} ignoré (${articleErr.message})`);
+      skipped++;
+    }
   }
   return { inserted, skipped, totalDetected: articles.length };
 }
