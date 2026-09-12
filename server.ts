@@ -900,6 +900,83 @@ app.post("/api/admin/seed-ohada-data", requireAdminAuth, async (req, res) => {
 });
 
 // --- Deuxième lot Code pénal (coups et blessures, voie de fait) ---
+// --- Extraction automatique d'articles depuis un texte brut (au lieu de les taper à la main) ---
+// L'admin colle un extrait de texte de loi (Code pénal, acte uniforme OHADA, etc.) — Gemini
+// repère et structure TOUS les articles qu'il contient, puis on les enregistre directement.
+app.post("/api/admin/extract-articles", requireAdminAuth, async (req, res) => {
+  const { rawText, sourceTitle, domain, organization, country, reference } = req.body;
+  if (!rawText || rawText.trim().length < 50) {
+    return res.status(400).json({ success: false, message: "Texte trop court ou manquant." });
+  }
+  if (!sourceTitle || !domain) {
+    return res.status(400).json({ success: false, message: "Titre de la source et domaine (PENAL/AFFAIRES) requis." });
+  }
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+
+  try {
+    // Trouve ou crée la source correspondante
+    let sourceId: number;
+    const existing = await pool.query("SELECT id FROM legal_sources WHERE title = $1", [sourceTitle]);
+    if (existing.rows.length > 0) {
+      sourceId = existing.rows[0].id;
+    } else {
+      const created = await pool.query(
+        `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+         VALUES ($1,$2,$3,'CODE',$4,$5,'ACTIVE') RETURNING id`,
+        [country || "CI", organization || "République de Côte d'Ivoire", domain, sourceTitle, reference || ""]
+      );
+      sourceId = created.rows[0].id;
+    }
+
+    const response = await getAIClient().models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: `Voici un extrait BRUT d'un texte de loi (peut contenir des artefacts de scan/OCR à ignorer). Repère CHAQUE article de loi présent dans cet extrait et structure-le. N'invente RIEN : si une information n'est pas présente dans le texte, laisse le champ vide ou null plutôt que de deviner.
+
+RÈGLES:
+- Un "article" = une disposition numérotée (Art. X, Article X)
+- official_text = le texte exact de l'article, nettoyé des artefacts OCR (espaces cassés, tirets de fin de ligne) mais SANS reformuler le fond
+- Si l'article prévoit des peines (emprisonnement/amende), extrais min/max en années et en FCFA — sinon laisse null
+- conditions = liste des éléments constitutifs si identifiables dans le texte, sinon chaîne vide
+- N'extrais QUE les articles complets et clairement identifiables dans ce texte, ignore les fragments coupés en début/fin d'extrait
+
+TEXTE:
+"""
+${rawText.slice(0, 45000)}
+"""
+
+Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"...","official_text":"...","min_sentence_years":null,"max_sentence_years":null,"fine_min_fcfa":null,"fine_max_fcfa":null,"conditions":"..."}]}`,
+      config: { responseMimeType: "application/json" },
+    });
+
+    const parsed = JSON.parse(response.text || "{}");
+    const articles = parsed.articles || [];
+
+    let inserted = 0;
+    let skipped = 0;
+    for (const art of articles) {
+      if (!art.article_number || !art.official_text) continue;
+      const dup = await pool.query(
+        "SELECT id FROM legal_articles WHERE source_id = $1 AND article_number = $2",
+        [sourceId, art.article_number]
+      );
+      if (dup.rows.length > 0) { skipped++; continue; }
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [sourceId, art.article_number, art.title || "", art.official_text, domain, art.title || "",
+         art.min_sentence_years || null, art.max_sentence_years || null, art.fine_min_fcfa || null, art.fine_max_fcfa || null,
+         art.conditions || "", `${art.title || ""} ${art.official_text}`]
+      );
+      inserted++;
+    }
+
+    res.json({ success: true, message: `${inserted} article(s) extrait(s) et enregistré(s), ${skipped} déjà présent(s) (ignoré(s)).`, inserted, skipped, totalDetected: articles.length });
+  } catch (err: any) {
+    console.error("[Extract] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'extraction : " + err.message });
+  }
+});
+
 app.post("/api/admin/seed-legal-data-2", requireAdminAuth, async (req, res) => {
   if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
   try {

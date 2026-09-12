@@ -21,6 +21,32 @@ export default function AdminPanel({ token }: { token: string }) {
   const [seedingOhadaSuretes, setSeedingOhadaSuretes] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
 
+  const [extractText, setExtractText] = useState("");
+  const [extractSourceTitle, setExtractSourceTitle] = useState("");
+  const [extractDomain, setExtractDomain] = useState("PENAL");
+  const [extracting, setExtracting] = useState(false);
+  const [extractResult, setExtractResult] = useState<string | null>(null);
+
+  const handleExtract = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExtracting(true);
+    setExtractResult(null);
+    try {
+      const res = await fetch("/api/admin/extract-articles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rawText: extractText, sourceTitle: extractSourceTitle, domain: extractDomain }),
+      });
+      const data = await res.json();
+      setExtractResult(data.message || "Échec.");
+      if (data.success) setExtractText("");
+    } catch {
+      setExtractResult("Erreur réseau.");
+    } finally {
+      setExtracting(false);
+    }
+  };
+
   const handleSeed = async (endpoint: string, setLoading: (v: boolean) => void) => {
     setLoading(true);
     setSeedResult(null);
@@ -135,6 +161,41 @@ export default function AdminPanel({ token }: { token: string }) {
           </button>
         </div>
         {seedResult && <p className="text-xs text-slate-400 mt-2.5">{seedResult}</p>}
+      </div>
+
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">
+          <BookOpen className="w-3.5 h-3.5" /> Extraction automatique par IA
+        </h3>
+        <p className="text-[11px] text-slate-500 mb-3">
+          Collez un extrait de texte de loi (OHADA, code, etc.) — Gemini repère et enregistre automatiquement chaque article, sans les taper à la main.
+        </p>
+        <form onSubmit={handleExtract} className="space-y-2.5">
+          <div className="flex gap-2">
+            <input
+              type="text" required placeholder="Titre de la source (ex: Acte uniforme sur le droit du travail)"
+              value={extractSourceTitle} onChange={(e) => setExtractSourceTitle(e.target.value)}
+              className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"
+            />
+            <select value={extractDomain} onChange={(e) => setExtractDomain(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2.5 text-xs text-white">
+              <option value="PENAL">Pénal</option>
+              <option value="AFFAIRES">Affaires</option>
+            </select>
+          </div>
+          <textarea
+            required placeholder="Collez ici le texte brut de la loi (jusqu'à ~45 000 caractères par envoi)..."
+            value={extractText} onChange={(e) => setExtractText(e.target.value)}
+            rows={6}
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500 resize-none"
+          />
+          <p className="text-[10px] text-slate-500">{extractText.length.toLocaleString("fr-FR")} caractères</p>
+          <button type="submit" disabled={extracting}
+            className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer">
+            {extracting ? "Extraction en cours (peut prendre 20-30s)..." : "Extraire et enregistrer les articles"}
+          </button>
+        </form>
+        {extractResult && <p className="text-xs text-slate-400 mt-2.5">{extractResult}</p>}
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
