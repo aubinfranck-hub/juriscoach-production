@@ -750,43 +750,47 @@ app.post("/api/admin/seed-legal-data", requireAdminAuth, async (req, res) => {
 
     const { rows: sourceRows } = await pool.query(
       `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, version, status)
-       VALUES ('CI', 'République de Côte d''Ivoire', 'PENAL', 'CODE', 'Code pénal ivoirien', 'Loi n°1981-640 modifiée par la loi n°2019-574', '2019', 'ACTIVE')
+       VALUES ('CI', 'République de Côte d''Ivoire', 'PENAL', 'CODE', 'Code pénal ivoirien', 'Loi n°2019-574 du 26 juin 2019, modifiée par la loi n°2021-893', '2021', 'ACTIVE')
        RETURNING id`
     );
     const sourceId = sourceRows[0].id;
 
+    // Texte officiel vérifié directement depuis le Journal Officiel (loi n°2019-574) et ses
+    // sources de recoupement (droit-afrique.com, loidici.biz, refworld.org). Le numéro de
+    // l'article "détournement de deniers publics" n'a pas pu être confirmé avec certitude
+    // pour la codification 2019 (texte vérifié, numéro à confirmer) — à corriger si besoin.
     const articles = [
       {
-        article_number: "Art. 402", title: "Abus de confiance",
-        official_text: "Quiconque détourne ou dissipe, au préjudice d'autrui, des fonds, valeurs ou un bien quelconque qui lui ont été remis et qu'il a acceptés à charge de les rendre, de les représenter ou d'en faire un usage déterminé, se rend coupable d'abus de confiance.",
+        article_number: "Art. 467", title: "Abus de confiance",
+        official_text: "Constitue un abus de confiance, le détournement, la dissipation ou la destruction, par une personne, au préjudice d'autrui, de fonds, de valeurs ou d'un bien meuble quelconque qui lui ont été remis et qu'elle a acceptés à charge de les rendre, de les représenter, d'en faire un usage ou un emploi déterminé. Dès lors que la preuve de la remise de la chose est rapportée, celui qui l'a reçue est présumé l'avoir détournée, dissipée ou détruite s'il ne peut la rendre, la représenter ou justifier qu'il en a fait l'usage ou l'emploi prévu.",
         infraction: "Abus de confiance",
-        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 100000, fine_max_fcfa: 1000000,
+        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 300000, fine_max_fcfa: 3000000,
         prescription_years: 3, procedure_type: "Tribunal correctionnel",
-        conditions: "Remise préalable du bien à charge de restitution ou d'usage déterminé\nDétournement ou dissipation du bien remis\nPréjudice pour le remettant",
+        conditions: "Remise préalable du bien à charge de restitution ou d'usage déterminé\nDétournement, dissipation ou destruction du bien remis\nPréjudice pour le remettant\nPrésomption de détournement si la chose n'est pas rendue/représentée/justifiée",
       },
       {
-        article_number: "Art. 404", title: "Escroquerie",
-        official_text: "Quiconque, soit par l'usage d'un faux nom ou d'une fausse qualité, soit par l'emploi de manœuvres frauduleuses, trompe une personne physique ou morale et la détermine ainsi, à son préjudice ou au préjudice d'un tiers, à remettre des fonds, des valeurs ou un bien quelconque, à fournir un service ou à consentir un acte opérant obligation ou décharge, commet une escroquerie.",
+        article_number: "Art. 470", title: "Escroquerie",
+        official_text: "L'escroquerie consiste à tromper une personne physique ou morale, soit par l'usage d'un faux nom ou d'une fausse qualité, soit par l'emploi de manœuvres frauduleuses, et à la déterminer ainsi, à son préjudice ou au préjudice d'un tiers, à remettre des fonds, des valeurs ou un bien quelconque. Peine aggravée à 10 ans d'emprisonnement et amende de 10.000.000 F si l'auteur a fait un appel public en vue de l'émission d'actions, obligations, bons, parts ou titres au profit d'une société, entreprise commerciale ou industrielle.",
         infraction: "Escroquerie",
-        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 100000, fine_max_fcfa: 1000000,
+        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 300000, fine_max_fcfa: 3000000,
         prescription_years: 3, procedure_type: "Tribunal correctionnel",
-        conditions: "Manœuvre frauduleuse, faux nom ou fausse qualité\nRemise déterminée par la tromperie\nPréjudice pour la victime",
+        conditions: "Faux nom, fausse qualité ou manœuvre frauduleuse\nRemise déterminée par la tromperie (le lien de cause à effet est essentiel)\nPréjudice pour la victime ou un tiers\nTentative punissable",
       },
       {
-        article_number: "Art. 399", title: "Vol",
-        official_text: "Quiconque soustrait frauduleusement une chose qui ne lui appartient pas est coupable de vol.",
+        article_number: "Art. 392", title: "Vol",
+        official_text: "Le vol se définit comme le fait de soustraire ou de prendre frauduleusement une chose qui ne vous appartient pas.",
         infraction: "Vol",
-        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 50000, fine_max_fcfa: 500000,
+        min_sentence_years: 5, max_sentence_years: 10, fine_min_fcfa: 300000, fine_max_fcfa: 3000000,
         prescription_years: 3, procedure_type: "Tribunal correctionnel",
-        conditions: "Soustraction de la chose (déplacement matériel)\nChose appartenant à autrui\nIntention frauduleuse",
+        conditions: "Soustraction ou prise frauduleuse de la chose\nChose appartenant à autrui\nIntention frauduleuse\nTentative punissable",
       },
       {
-        article_number: "Art. 178", title: "Détournement de deniers publics",
-        official_text: "Tout fonctionnaire, tout agent ou préposé d'une administration publique qui détourne, dissipe ou soustrait des fonds, effets, pièces, titres ou actes en sa possession en raison de ses fonctions, est puni conformément aux dispositions du présent article.",
+        article_number: "Art. non confirmé (2019) — anciennement art. 178 du code de 1981", title: "Détournement de deniers publics par un fonctionnaire",
+        official_text: "Tout fonctionnaire qui détourne ou dissipe, en tout ou partie, des deniers publics ou privés, effets ou titres en tenant lieu, qui sont entre ses mains en vertu de ses fonctions, est puni conformément aux dispositions du présent article. Les poursuites engagées à ce titre doivent obligatoirement faire l'objet d'une instruction préparatoire ; le juge d'instruction doit, si l'inculpation est maintenue, ordonner le séquestre des biens de l'inculpé.",
         infraction: "Détournement de deniers publics",
-        min_sentence_years: 5, max_sentence_years: 20, fine_min_fcfa: 1000000, fine_max_fcfa: 10000000,
-        prescription_years: 10, procedure_type: "Tribunal criminel / Cour de répression des infractions économiques",
-        conditions: "Qualité de fonctionnaire, agent ou préposé public\nDétention des fonds/biens en raison des fonctions\nDétournement, dissipation ou soustraction",
+        min_sentence_years: 5, max_sentence_years: 10, fine_min_fcfa: 300000, fine_max_fcfa: 3000000,
+        prescription_years: 10, procedure_type: "Instruction préparatoire obligatoire — Tribunal correctionnel / Cour de répression des infractions économiques",
+        conditions: "Qualité de fonctionnaire\nDétention des deniers/effets en raison des fonctions\nDétournement ou dissipation, même partielle",
       },
     ];
 
