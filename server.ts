@@ -735,6 +735,78 @@ app.get("/api/dossiers/:id/chronology", requireAuth, async (req: any, res) => {
 
 // --- GÉNÉRATION DE DOCUMENTS ---
 
+// --- Alimentation de la base juridique (admin uniquement) ---
+// Premier jeu de textes réels (Code pénal ivoirien, infractions courantes). À des fins de
+// démarrage/test du moteur — CE CONTENU DOIT ÊTRE VÉRIFIÉ PAR UN JURISTE avant tout usage
+// avec de vrais clients : les numéros d'articles et peines doivent être confirmés sur le
+// texte officiel en vigueur (le Code pénal ivoirien a été réformé par la loi n°2019-574).
+app.post("/api/admin/seed-legal-data", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources");
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Base déjà alimentée — aucune action (évite les doublons).", skipped: true });
+    }
+
+    const { rows: sourceRows } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, version, status)
+       VALUES ('CI', 'République de Côte d''Ivoire', 'PENAL', 'CODE', 'Code pénal ivoirien', 'Loi n°1981-640 modifiée par la loi n°2019-574', '2019', 'ACTIVE')
+       RETURNING id`
+    );
+    const sourceId = sourceRows[0].id;
+
+    const articles = [
+      {
+        article_number: "Art. 402", title: "Abus de confiance",
+        official_text: "Quiconque détourne ou dissipe, au préjudice d'autrui, des fonds, valeurs ou un bien quelconque qui lui ont été remis et qu'il a acceptés à charge de les rendre, de les représenter ou d'en faire un usage déterminé, se rend coupable d'abus de confiance.",
+        infraction: "Abus de confiance",
+        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 100000, fine_max_fcfa: 1000000,
+        prescription_years: 3, procedure_type: "Tribunal correctionnel",
+        conditions: "Remise préalable du bien à charge de restitution ou d'usage déterminé\nDétournement ou dissipation du bien remis\nPréjudice pour le remettant",
+      },
+      {
+        article_number: "Art. 404", title: "Escroquerie",
+        official_text: "Quiconque, soit par l'usage d'un faux nom ou d'une fausse qualité, soit par l'emploi de manœuvres frauduleuses, trompe une personne physique ou morale et la détermine ainsi, à son préjudice ou au préjudice d'un tiers, à remettre des fonds, des valeurs ou un bien quelconque, à fournir un service ou à consentir un acte opérant obligation ou décharge, commet une escroquerie.",
+        infraction: "Escroquerie",
+        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 100000, fine_max_fcfa: 1000000,
+        prescription_years: 3, procedure_type: "Tribunal correctionnel",
+        conditions: "Manœuvre frauduleuse, faux nom ou fausse qualité\nRemise déterminée par la tromperie\nPréjudice pour la victime",
+      },
+      {
+        article_number: "Art. 399", title: "Vol",
+        official_text: "Quiconque soustrait frauduleusement une chose qui ne lui appartient pas est coupable de vol.",
+        infraction: "Vol",
+        min_sentence_years: 1, max_sentence_years: 5, fine_min_fcfa: 50000, fine_max_fcfa: 500000,
+        prescription_years: 3, procedure_type: "Tribunal correctionnel",
+        conditions: "Soustraction de la chose (déplacement matériel)\nChose appartenant à autrui\nIntention frauduleuse",
+      },
+      {
+        article_number: "Art. 178", title: "Détournement de deniers publics",
+        official_text: "Tout fonctionnaire, tout agent ou préposé d'une administration publique qui détourne, dissipe ou soustrait des fonds, effets, pièces, titres ou actes en sa possession en raison de ses fonctions, est puni conformément aux dispositions du présent article.",
+        infraction: "Détournement de deniers publics",
+        min_sentence_years: 5, max_sentence_years: 20, fine_min_fcfa: 1000000, fine_max_fcfa: 10000000,
+        prescription_years: 10, procedure_type: "Tribunal criminel / Cour de répression des infractions économiques",
+        conditions: "Qualité de fonctionnaire, agent ou préposé public\nDétention des fonds/biens en raison des fonctions\nDétournement, dissipation ou soustraction",
+      },
+    ];
+
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, prescription_years, procedure_type, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,'PENAL',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [sourceId, art.article_number, art.title, art.official_text, art.infraction, art.min_sentence_years,
+         art.max_sentence_years, art.fine_min_fcfa, art.fine_max_fcfa, art.prescription_years, art.procedure_type,
+         art.conditions, `${art.title} ${art.official_text}`]
+      );
+    }
+
+    res.json({ success: true, message: `${articles.length} article(s) ajoutés sous la source "Code pénal ivoirien".`, source_id: sourceId });
+  } catch (err: any) {
+    console.error("[Seed] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'alimentation." });
+  }
+});
+
 app.post("/api/documents/generate", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { dossier_id, document_type, recipient_name, recipient_address, facts_summary, amount_claimed_fcfa, deadline_days } = req.body;
