@@ -1010,6 +1010,7 @@ const extractJobs = new Map<string, ExtractJob>();
 
 app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, (req, res) => {
   const { pdfUrl, sourceTitle, domain, startPage, endPage } = req.body;
+  console.log(`[Extract PDF] Requête reçue: pages ${startPage}-${endPage}, source "${sourceTitle}"`);
   if (!pdfUrl || !sourceTitle || !domain) {
     return res.status(400).json({ success: false, message: "Lien PDF, titre de la source et domaine requis." });
   }
@@ -1017,6 +1018,7 @@ app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, (req, res) => {
 
   const jobId = crypto.randomBytes(8).toString("hex");
   extractJobs.set(jobId, { status: "running", message: "Téléchargement du PDF...", progress: "", totalInserted: 0, totalSkipped: 0 });
+  console.log(`[Extract PDF] Tâche créée: ${jobId}`);
   res.json({ success: true, jobId });
 
   // Traitement en arrière-plan — la réponse HTTP ci-dessus est déjà partie, ce qui suit ne
@@ -1071,11 +1073,9 @@ app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, (req, res) => {
         }
       }
 
-      extractJobs.set(jobId, {
-        status: "done",
-        message: `Terminé : ${text.length.toLocaleString("fr-FR")} caractères traités. ${totalInserted} article(s) enregistré(s), ${totalSkipped} déjà présent(s)/ignoré(s).`,
-        progress: "", totalInserted, totalSkipped,
-      });
+      const finalMessage = `Terminé : ${text.length.toLocaleString("fr-FR")} caractères traités. ${totalInserted} article(s) enregistré(s), ${totalSkipped} déjà présent(s)/ignoré(s).`;
+      console.log(`[Extract PDF] Tâche ${jobId} terminée: ${finalMessage}`);
+      extractJobs.set(jobId, { status: "done", message: finalMessage, progress: "", totalInserted, totalSkipped });
     } catch (err: any) {
       console.error("[Extract PDF] Échec:", err.stack || err.message);
       extractJobs.set(jobId, { status: "error", message: "Échec : " + err.message, progress: "", totalInserted: 0, totalSkipped: 0 });
