@@ -38,7 +38,7 @@ export default function AdminPanel({ token }: { token: string }) {
   const handleExtractFromPdfUrl = async (e: React.FormEvent) => {
     e.preventDefault();
     setExtractingPdf(true);
-    setPdfResult(null);
+    setPdfResult("Démarrage...");
     try {
       const res = await fetch("/api/admin/extract-from-pdf-url", {
         method: "POST",
@@ -50,10 +50,37 @@ export default function AdminPanel({ token }: { token: string }) {
         }),
       });
       const data = await res.json();
-      setPdfResult(data.message || "Échec.");
+      if (!data.success || !data.jobId) {
+        setPdfResult(data.message || "Échec.");
+        setExtractingPdf(false);
+        return;
+      }
+      // La tâche tourne en arrière-plan côté serveur — on vérifie l'avancement toutes les
+      // 4 secondes, sans jamais laisser une seule requête ouverte plusieurs minutes.
+      const poll = async () => {
+        try {
+          const jobRes = await fetch(`/api/admin/extract-job/${data.jobId}`, { headers: { Authorization: `Bearer ${token}` } });
+          const job = await jobRes.json();
+          if (!job.success) {
+            setPdfResult(job.message || "Tâche introuvable.");
+            setExtractingPdf(false);
+            return;
+          }
+          if (job.status === "running") {
+            setPdfResult(`${job.message} ${job.progress}`.trim());
+            setTimeout(poll, 4000);
+          } else {
+            setPdfResult(job.message);
+            setExtractingPdf(false);
+          }
+        } catch {
+          setPdfResult("Connexion perdue pendant le suivi — le traitement continue peut-être en arrière-plan, réessayez de vérifier dans une minute.");
+          setExtractingPdf(false);
+        }
+      };
+      poll();
     } catch (err: any) {
       setPdfResult(`Échec réseau : ${err?.message || "cause inconnue"}.`);
-    } finally {
       setExtractingPdf(false);
     }
   };

@@ -995,54 +995,85 @@ Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"..
 // --- Nouvelle méthode : le SERVEUR va chercher et lire le PDF lui-même — l'admin ne
 // transmet plus qu'un lien (petite requête), au lieu d'un gros texte depuis le téléphone
 // (source de la panne "Failed to fetch" jamais élucidée avec l'envoi de texte brut).
-app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, async (req, res) => {
-  console.log(`[Extract PDF] Requête reçue pour URL: ${req.body?.pdfUrl}, pages ${req.body?.startPage}-${req.body?.endPage}`);
+// Tâche de fond avec suivi de progression : la requête HTTP répond immédiatement avec un
+// identifiant de tâche, le traitement (potentiellement plusieurs minutes) continue en arrière-
+// plan côté serveur — évite toute coupure de connexion par l'infrastructure Render, qui limite
+// la durée d'une requête HTTP unique bien avant qu'un PDF de 50+ pages ne soit traité.
+interface ExtractJob {
+  status: "running" | "done" | "error";
+  message: string;
+  progress: string;
+  totalInserted: number;
+  totalSkipped: number;
+}
+const extractJobs = new Map<string, ExtractJob>();
+
+app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, (req, res) => {
   const { pdfUrl, sourceTitle, domain, startPage, endPage } = req.body;
   if (!pdfUrl || !sourceTitle || !domain) {
     return res.status(400).json({ success: false, message: "Lien PDF, titre de la source et domaine requis." });
   }
   if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
 
-  try {
-    const pdfRes = await fetch(pdfUrl);
-    if (!pdfRes.ok) throw new Error(`Le PDF n'a pas pu être téléchargé (HTTP ${pdfRes.status})`);
-    const buffer = Buffer.from(await pdfRes.arrayBuffer());
-    const parsed = await pdfParse(buffer);
+  const jobId = crypto.randomBytes(8).toString("hex");
+  extractJobs.set(jobId, { status: "running", message: "Téléchargement du PDF...", progress: "", totalInserted: 0, totalSkipped: 0 });
+  res.json({ success: true, jobId });
 
-    let text = parsed.text;
-    // Découpage optionnel par page approximatif (pdf-parse ne donne pas de bornes exactes
-    // par page dans le texte brut, mais rend souvent des sauts de page en \f — on s'en sert
-    // si présents, sinon on traite le texte entier).
-    if (startPage || endPage) {
-      const pages = text.split("\f");
-      const start = (startPage || 1) - 1;
-      const end = endPage || pages.length;
-      text = pages.slice(start, end).join("\n");
+  // Traitement en arrière-plan — la réponse HTTP ci-dessus est déjà partie, ce qui suit ne
+  // bloque plus aucune connexion cliente.
+  (async () => {
+    try {
+      const pdfRes = await fetch(pdfUrl);
+      if (!pdfRes.ok) throw new Error(`Le PDF n'a pas pu être téléchargé (HTTP ${pdfRes.status})`);
+      const buffer = Buffer.from(await pdfRes.arrayBuffer());
+      extractJobs.set(jobId, { ...extractJobs.get(jobId)!, message: "Lecture du PDF..." });
+      const parsed = await pdfParse(buffer);
+
+      let text = parsed.text;
+      if (startPage || endPage) {
+        const pages = text.split("\f");
+        const start = (startPage || 1) - 1;
+        const end = endPage || pages.length;
+        text = pages.slice(start, end).join("\n");
+      }
+
+      if (!text || text.trim().length < 50) {
+        extractJobs.set(jobId, { status: "error", message: "Aucun texte exploitable extrait de ce PDF (peut-être un scan sans OCR).", progress: "", totalInserted: 0, totalSkipped: 0 });
+        return;
+      }
+
+      const totalChunks = Math.ceil(text.length / 42000);
+      let totalInserted = 0, totalSkipped = 0;
+      for (let i = 0; i < text.length; i += 42000) {
+        const chunkNum = Math.floor(i / 42000) + 1;
+        extractJobs.set(jobId, { status: "running", message: "En cours...", progress: `Morceau ${chunkNum}/${totalChunks}`, totalInserted, totalSkipped });
+        const slice = text.slice(i, i + 42000);
+        if (slice.trim().length < 50) continue;
+        try {
+          const result = await extractAndStoreArticles(slice, sourceTitle, domain);
+          totalInserted += result.inserted;
+          totalSkipped += result.skipped;
+        } catch (chunkErr: any) {
+          console.error(`[Extract PDF] Morceau ${chunkNum} échoué:`, chunkErr.message);
+        }
+      }
+
+      extractJobs.set(jobId, {
+        status: "done",
+        message: `Terminé : ${text.length.toLocaleString("fr-FR")} caractères traités. ${totalInserted} article(s) enregistré(s), ${totalSkipped} déjà présent(s)/ignoré(s).`,
+        progress: "", totalInserted, totalSkipped,
+      });
+    } catch (err: any) {
+      console.error("[Extract PDF] Échec:", err.stack || err.message);
+      extractJobs.set(jobId, { status: "error", message: "Échec : " + err.message, progress: "", totalInserted: 0, totalSkipped: 0 });
     }
+  })();
+});
 
-    if (!text || text.trim().length < 50) {
-      return res.json({ success: false, message: "Aucun texte exploitable extrait de ce PDF (peut-être un scan sans OCR)." });
-    }
-
-    // Le texte peut dépasser la limite d'un seul appel IA (45000 caractères) — on découpe et
-    // on traite chaque morceau successivement, tout côté serveur.
-    let totalInserted = 0, totalSkipped = 0;
-    for (let i = 0; i < text.length; i += 42000) {
-      const slice = text.slice(i, i + 42000);
-      if (slice.trim().length < 50) continue;
-      const result = await extractAndStoreArticles(slice, sourceTitle, domain);
-      totalInserted += result.inserted;
-      totalSkipped += result.skipped;
-    }
-
-    res.json({
-      success: true,
-      message: `PDF traité (${text.length.toLocaleString("fr-FR")} caractères). ${totalInserted} article(s) enregistré(s), ${totalSkipped} déjà présent(s)/ignoré(s).`,
-    });
-  } catch (err: any) {
-    console.error("[Extract PDF] Échec:", err.stack || err.message);
-    res.status(500).json({ success: false, message: "Échec : " + err.message });
-  }
+app.get("/api/admin/extract-job/:jobId", requireAdminAuth, (req, res) => {
+  const job = extractJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ success: false, message: "Tâche introuvable (peut-être expirée après un redémarrage serveur)." });
+  res.json({ success: true, ...job });
 });
 
 app.post("/api/admin/extract-articles", requireAdminAuth, async (req, res) => {
