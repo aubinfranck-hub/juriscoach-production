@@ -1027,14 +1027,27 @@ app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, (req, res) => {
       if (!pdfRes.ok) throw new Error(`Le PDF n'a pas pu être téléchargé (HTTP ${pdfRes.status})`);
       const buffer = Buffer.from(await pdfRes.arrayBuffer());
       extractJobs.set(jobId, { ...extractJobs.get(jobId)!, message: "Lecture du PDF..." });
-      const parsed = await pdfParse(buffer);
 
-      let text = parsed.text;
+      // Découpage fiable page par page : le texte brut de pdf-parse ne contient pas toujours
+      // de séparateur de page exploitable (\f) selon le PDF — on force la capture page par
+      // page via le callback pagerender, seule méthode fiable constatée sur ce document.
+      const pages: string[] = [];
+      await pdfParse(buffer, {
+        pagerender: (pageData: any) =>
+          pageData.getTextContent().then((tc: any) => {
+            const pageText = tc.items.map((item: any) => item.str).join(" ");
+            pages.push(pageText);
+            return pageText;
+          }),
+      });
+
+      let text: string;
       if (startPage || endPage) {
-        const pages = text.split("\f");
         const start = (startPage || 1) - 1;
         const end = endPage || pages.length;
-        text = pages.slice(start, end).join("\n");
+        text = pages.slice(start, end).join("\n\n");
+      } else {
+        text = pages.join("\n\n");
       }
 
       if (!text || text.trim().length < 50) {
