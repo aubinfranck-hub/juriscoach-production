@@ -27,6 +27,37 @@ export default function AdminPanel({ token }: { token: string }) {
   const [extracting, setExtracting] = useState(false);
   const [extractResult, setExtractResult] = useState<string | null>(null);
 
+  const [pdfUrl, setPdfUrl] = useState("");
+  const [pdfSourceTitle, setPdfSourceTitle] = useState("");
+  const [pdfDomain, setPdfDomain] = useState("PENAL");
+  const [pdfStartPage, setPdfStartPage] = useState("");
+  const [pdfEndPage, setPdfEndPage] = useState("");
+  const [extractingPdf, setExtractingPdf] = useState(false);
+  const [pdfResult, setPdfResult] = useState<string | null>(null);
+
+  const handleExtractFromPdfUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setExtractingPdf(true);
+    setPdfResult(null);
+    try {
+      const res = await fetch("/api/admin/extract-from-pdf-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          pdfUrl, sourceTitle: pdfSourceTitle, domain: pdfDomain,
+          startPage: pdfStartPage ? Number(pdfStartPage) : undefined,
+          endPage: pdfEndPage ? Number(pdfEndPage) : undefined,
+        }),
+      });
+      const data = await res.json();
+      setPdfResult(data.message || "Échec.");
+    } catch (err: any) {
+      setPdfResult(`Échec réseau : ${err?.message || "cause inconnue"}.`);
+    } finally {
+      setExtractingPdf(false);
+    }
+  };
+
   const [imageSourceTitle, setImageSourceTitle] = useState("");
   const [imageDomain, setImageDomain] = useState("PENAL");
   const [extractingImage, setExtractingImage] = useState(false);
@@ -163,6 +194,45 @@ export default function AdminPanel({ token }: { token: string }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
       <h2 className="text-2xl font-display font-bold text-white">Administration</h2>
+
+      <div className="bg-slate-900 border-2 border-amber-600 rounded-2xl p-5">
+        <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-amber-500 font-semibold mb-3">
+          <BookOpen className="w-3.5 h-3.5" /> Extraction depuis un lien PDF (méthode recommandée)
+        </h3>
+        <p className="text-[11px] text-slate-500 mb-3">
+          Collez juste le lien du PDF — le serveur le télécharge et le lit lui-même, sans passer par votre téléphone. Fonctionne même si le PDF contient des pages scannées avec OCR.
+        </p>
+        <form onSubmit={handleExtractFromPdfUrl} className="space-y-2.5">
+          <input
+            type="url" required placeholder="https://...code-penal.pdf"
+            value={pdfUrl} onChange={(e) => setPdfUrl(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"
+          />
+          <div className="flex gap-2">
+            <input
+              type="text" required placeholder="Titre de la source (ex: Code pénal ivoirien)"
+              value={pdfSourceTitle} onChange={(e) => setPdfSourceTitle(e.target.value)}
+              className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"
+            />
+            <select value={pdfDomain} onChange={(e) => setPdfDomain(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2.5 text-xs text-white">
+              <option value="PENAL">Pénal</option>
+              <option value="AFFAIRES">Affaires</option>
+            </select>
+          </div>
+          <div className="flex gap-2">
+            <input type="number" placeholder="Page début (optionnel)" value={pdfStartPage} onChange={(e) => setPdfStartPage(e.target.value)}
+              className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500" />
+            <input type="number" placeholder="Page fin (optionnel)" value={pdfEndPage} onChange={(e) => setPdfEndPage(e.target.value)}
+              className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500" />
+          </div>
+          <button type="submit" disabled={extractingPdf}
+            className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer">
+            {extractingPdf ? "Téléchargement + extraction en cours (peut prendre 1-2 min)..." : "Traiter ce PDF"}
+          </button>
+        </form>
+        {pdfResult && <p className="text-xs text-slate-400 mt-2.5">{pdfResult}</p>}
+      </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
         <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-slate-400 font-semibold mb-3">
