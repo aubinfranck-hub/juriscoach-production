@@ -992,6 +992,7 @@ Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"..
 }
 
 app.post("/api/admin/extract-articles", requireAdminAuth, async (req, res) => {
+  console.log(`[Extract] Requête reçue, taille texte: ${req.body?.rawText?.length || 0} caractères, source: "${req.body?.sourceTitle}"`);
   const { rawText, sourceTitle, domain, organization, country, reference } = req.body;
   if (!rawText || rawText.trim().length < 50) {
     return res.status(400).json({ success: false, message: "Texte trop court ou manquant." });
@@ -1200,6 +1201,23 @@ app.get("/api/documents/:id", requireAuth, async (req: any, res) => {
 app.delete("/api/documents/:id", requireAuth, async (req: any, res) => {
   await pool!.query("DELETE FROM generated_documents WHERE id = $1", [req.params.id]);
   res.json({ success: true, message: "Document supprimé." });
+});
+
+// Filet de sécurité : capture toute erreur qui échapperait à un bloc try/catch existant dans
+// une route, pour ne jamais laisser une requête sans réponse (ce qui provoquerait "Failed to
+// fetch" côté client sans aucune trace serveur).
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("[Erreur non gérée]", err?.stack || err);
+  if (!res.headersSent) {
+    res.status(500).json({ success: false, message: "Erreur interne inattendue." });
+  }
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err?.stack || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
 });
 
 async function startServer() {
