@@ -441,6 +441,25 @@ function extractJson(text: string): any {
   return JSON.parse(match[0]);
 }
 
+// Secours quand Gemini est surchargé (503) : même tâche de structuration via un modèle
+// hébergé sur NVIDIA (build.nvidia.com), API compatible OpenAI.
+async function callNvidiaFallback(prompt: string): Promise<string> {
+  if (!process.env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY non configurée — pas de secours possible.");
+  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NVIDIA_API_KEY}` },
+    body: JSON.stringify({
+      model: "meta/llama-3.1-70b-instruct",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 4096,
+    }),
+  });
+  if (!res.ok) throw new Error(`NVIDIA a répondu ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data: any = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
 // --- DIAGNOSTIC PÉNAL ---
 
 app.post("/api/diagnostic/penal", requireAuth, resolveUserId, async (req: any, res) => {
@@ -928,9 +947,7 @@ async function extractAndStoreArticles(
     sourceId = created.rows[0].id;
   }
 
-  const response = await getAIClient().models.generateContent({
-    model: "gemini-3.5-flash",
-    contents: `Voici un extrait BRUT d'un texte de loi (peut contenir des artefacts de scan/OCR à ignorer). Repère CHAQUE article de loi présent dans cet extrait et structure-le. N'invente RIEN : si une information n'est pas présente dans le texte, laisse le champ vide ou null plutôt que de deviner.
+  const prompt = `Voici un extrait BRUT d'un texte de loi (peut contenir des artefacts de scan/OCR à ignorer). Repère CHAQUE article de loi présent dans cet extrait et structure-le. N'invente RIEN : si une information n'est pas présente dans le texte, laisse le champ vide ou null plutôt que de deviner.
 
 RÈGLES:
 - Un "article" = une disposition numérotée (Art. X, Article X)
@@ -944,11 +961,22 @@ TEXTE:
 ${rawText.slice(0, 45000)}
 """
 
-Réponds UNIQUEMENT en JSON: {"articles":[{"article_number":"Art. X","title":"...","official_text":"...","min_sentence_years":null,"max_sentence_years":null,"fine_min_fcfa":null,"fine_max_fcfa":null,"conditions":"..."}]}`,
-    config: { responseMimeType: "application/json" },
-  });
+Réponds UNIQUEMENT en JSON, sans aucun texte avant/après, sans balises markdown: {"articles":[{"article_number":"Art. X","title":"...","official_text":"...","min_sentence_years":null,"max_sentence_years":null,"fine_min_fcfa":null,"fine_max_fcfa":null,"conditions":"..."}]}`;
 
-  const parsed = JSON.parse(response.text || "{}");
+  let responseText: string;
+  try {
+    const response = await getAIClient().models.generateContent({
+      model: "gemini-3.5-flash",
+      contents: prompt,
+      config: { responseMimeType: "application/json" },
+    });
+    responseText = response.text || "";
+  } catch (geminiErr: any) {
+    console.warn("[Extract] Gemini indisponible, secours NVIDIA:", geminiErr.message);
+    responseText = await callNvidiaFallback(prompt);
+  }
+
+  const parsed = extractJson(responseText || "{}");
   const articles = parsed.articles || [];
 
   let inserted = 0;
