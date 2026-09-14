@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Scale, LogOut, ShieldCheck } from "lucide-react";
 import LoginScreen from "./components/LoginScreen";
 import AdminPanel from "./components/AdminPanel";
+import DiagnosticScreen from "./components/DiagnosticScreen";
 
 export default function App() {
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem("juriscoach_token"));
@@ -60,17 +61,7 @@ export default function App() {
       {activeTab === "admin" && isAdmin ? (
         <AdminPanel token={sessionToken} />
       ) : (
-        <div className="max-w-2xl mx-auto px-5 py-16 text-center">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-700 mb-4">
-            <Scale className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-display font-bold mb-2">Connexion réussie</h1>
-          <p className="text-sm text-slate-400 leading-relaxed">
-            L'authentification JurisCoach est en place. L'assistant juridique lui-même
-            (analyse de documents, questions de droit ivoirien, etc.) reste à construire —
-            dites à Claude ce que vous voulez comme prochaine étape.
-          </p>
-        </div>
+        <DiagnosticScreen token={sessionToken} />
       )}
     </div>
   );
