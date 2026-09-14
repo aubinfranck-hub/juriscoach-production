@@ -277,15 +277,15 @@ async function initDatabase(): Promise<void> {
       primary_qualification VARCHAR(300),
       secondary_qualifications JSONB,
       pertinence_score INTEGER,
-      confidence_level VARCHAR(50),
+      confidence_level TEXT,
       constitutive_elements JSONB,
       applicable_texts JSONB,
       sentences JSONB,
       evidence_needed JSONB,
-      procedure_type VARCHAR(100),
+      procedure_type TEXT,
       prescription_info TEXT,
       missing_information JSONB,
-      risk_level VARCHAR(50),
+      risk_level TEXT,
       explanation_sources JSONB,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -312,6 +312,18 @@ async function initDatabase(): Promise<void> {
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_source_number ON legal_articles(source_id, article_number)`);
   } catch (err: any) {
     console.warn("[DB] Index unique articles non créé (doublons probables) :", err.message);
+  }
+
+  // Élargit des colonnes créées trop étroites (VARCHAR) : les modèles de secours (DeepSeek,
+  // NVIDIA) répondent souvent de façon plus verbeuse que Gemini et dépassaient la limite.
+  try {
+    await pool.query(`
+      ALTER TABLE diagnostic_results ALTER COLUMN confidence_level TYPE TEXT;
+      ALTER TABLE diagnostic_results ALTER COLUMN procedure_type TYPE TEXT;
+      ALTER TABLE diagnostic_results ALTER COLUMN risk_level TYPE TEXT;
+    `);
+  } catch (err: any) {
+    console.warn("[DB] Élargissement des colonnes diagnostic_results échoué :", err.message);
   }
 
   const accountsRes = await pool.query("SELECT * FROM accounts");
