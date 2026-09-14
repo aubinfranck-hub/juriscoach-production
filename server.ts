@@ -447,14 +447,20 @@ async function callNvidiaFallback(prompt: string): Promise<string> {
   if (!process.env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY non configurée — pas de secours possible.");
   // Catalogue NVIDIA en évolution (des modèles y sont retirés régulièrement) — on essaie
   // plusieurs modèles dans l'ordre, pour ne pas dépendre d'un seul nom qui pourrait disparaître.
-  const models = ["meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "moonshotai/kimi-k2.6"];
+  // "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" est confirmé déployé sur ce compte
+  // (fourni directement par l'utilisateur depuis son tableau de bord build.nvidia.com) —
+  // en premier. Les autres restent en secours si jamais celui-ci disparaît du catalogue.
+  const models = ["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct"];
   let lastErr: any;
   for (const model of models) {
     try {
       const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NVIDIA_API_KEY}` },
-        body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4096 }),
+        body: JSON.stringify({
+          model, messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 8192,
+          ...(model.includes("reasoning") ? { reasoning_budget: 4096, top_p: 0.95 } : {}),
+        }),
       });
       if (!res.ok) {
         const errText = (await res.text()).slice(0, 200);
