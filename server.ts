@@ -520,6 +520,24 @@ async function callDeepseekFallback(prompt: string): Promise<string> {
   return data.choices?.[0]?.message?.content || "";
 }
 
+// Point d'entrée unique pour tout appel IA texte simple (hors extraction d'articles) —
+// même chaîne de secours Gemini -> NVIDIA -> DeepSeek, pour que le diagnostic ne dépende
+// pas uniquement du quota gratuit Gemini (20 requêtes/jour, vite épuisé).
+async function generateWithFallback(prompt: string): Promise<string> {
+  try {
+    const response = await getAIClient().models.generateContent({ model: "gemini-3.5-flash", contents: prompt });
+    return response.text || "";
+  } catch (geminiErr: any) {
+    console.warn("[IA] Gemini indisponible, secours NVIDIA:", geminiErr.message);
+    try {
+      return await callNvidiaFallback(prompt);
+    } catch (nvidiaErr: any) {
+      console.warn("[IA] NVIDIA aussi indisponible, secours DeepSeek:", nvidiaErr.message);
+      return await callDeepseekFallback(prompt);
+    }
+  }
+}
+
 // --- DIAGNOSTIC PÉNAL ---
 
 app.post("/api/diagnostic/penal", requireAuth, resolveUserId, async (req: any, res) => {
@@ -535,9 +553,7 @@ app.post("/api/diagnostic/penal", requireAuth, resolveUserId, async (req: any, r
     );
     const diagnosticId = diagResult.rows[0].id;
 
-    const response = await getAIClient().models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: `Tu es JurisCoach, un système de diagnostic juridique pour la Côte d'Ivoire.
+    const response = await generateWithFallback(`Tu es JurisCoach, un système de diagnostic juridique pour la Côte d'Ivoire.
 
 La situation décrite: "${description}"
 
@@ -546,12 +562,11 @@ Génère 5 questions structurées en JSON pour clarifier cette situation pénale
 Format réponse JSON UNIQUEMENT:
 {"questions":[{"id":1,"question":"...","field_name":"...","type":"radio","options":["Oui","Non","Pas certain"]}]}
 
-Focus sur: infraction probable, auteur, victime, élément constitutif, intention, circonstances.`,
-    });
+Focus sur: infraction probable, auteur, victime, élément constitutif, intention, circonstances.`);
 
     let questionsData: any;
     try {
-      questionsData = extractJson(response.text || "");
+      questionsData = extractJson(response || "");
     } catch {
       questionsData = {
         questions: [
@@ -619,8 +634,8 @@ RÈGLES:
 JSON REQUIS:
 {"primary_qualification":"...","secondary_qualifications":["..."],"pertinence_score":85,"confidence_level":"HAUTE|MODÉRÉE|BASSE","constitutive_elements":["..."],"applicable_articles":[{"article_number":"...","source":"...","title":"...","text":"..."}],"sentences":{"min_years":2,"max_years":5,"min_fine":500000,"max_fine":2000000},"evidence_needed":["..."],"procedure":"...","prescription_years":5,"risk_level":"FAIBLE|MODÉRÉ|ÉLEVÉ","missing_information":["..."],"explanation":[{"fact":"...","rule":"...","source":"...","conclusion":"..."}]}`;
 
-    const response = await getAIClient().models.generateContent({ model: "gemini-3.5-flash", contents: prompt });
-    const diagnosisData = extractJson(response.text || "");
+    const response = await generateWithFallback(prompt);
+    const diagnosisData = extractJson(response || "");
 
     await pool!.query(
       `UPDATE diagnostic_results SET input_answers=$1, primary_qualification=$2, secondary_qualifications=$3,
@@ -1372,8 +1387,7 @@ Contexte dossier:
 
 Produis un document professionnel en HTML prêt à être converti. N'invente pas d'articles. Cite uniquement des textes existants. Le document doit être signable/envoyable.`;
 
-    const response = await getAIClient().models.generateContent({ model: "gemini-3.5-flash", contents: prompt });
-    const content = response.text || "";
+    const content = await generateWithFallback(prompt);
 
     const result = await pool!.query(
       `INSERT INTO generated_documents (dossier_id, document_type, title, content, format) VALUES ($1,$2,$3,$4,'html') RETURNING id, created_at`,
