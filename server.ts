@@ -477,6 +477,35 @@ async function callNvidiaFallback(prompt: string): Promise<string> {
   throw lastErr || new Error("Tous les modèles NVIDIA de secours ont échoué.");
 }
 
+// Trouve la clé DeepSeek quelle que soit la casse exacte utilisée sur Render (le nom exact
+// nous a été donné de façon incertaine — on couvre les variantes plausibles).
+function findDeepseekKey(): string | undefined {
+  const candidates = ["DEEPSEEK_API_KEY", "Deepseek", "DEEPSEEK", "deepseek", "Deepseek_Api_Key", "DeepseekApiKey"];
+  for (const name of candidates) {
+    if (process.env[name]) return process.env[name];
+  }
+  return undefined;
+}
+
+// Second niveau de secours (après Gemini ET NVIDIA) : DeepSeek, API compatible OpenAI.
+async function callDeepseekFallback(prompt: string): Promise<string> {
+  const key = findDeepseekKey();
+  if (!key) throw new Error("Clé DeepSeek non trouvée sous les noms de variable essayés.");
+  const res = await fetch("https://api.deepseek.com/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    body: JSON.stringify({
+      model: "deepseek-chat",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 8192,
+    }),
+  });
+  if (!res.ok) throw new Error(`DeepSeek a répondu ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data: any = await res.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
 // --- DIAGNOSTIC PÉNAL ---
 
 app.post("/api/diagnostic/penal", requireAuth, resolveUserId, async (req: any, res) => {
@@ -990,7 +1019,12 @@ Réponds UNIQUEMENT en JSON, sans aucun texte avant/après, sans balises markdow
     responseText = response.text || "";
   } catch (geminiErr: any) {
     console.warn("[Extract] Gemini indisponible, secours NVIDIA:", geminiErr.message);
-    responseText = await callNvidiaFallback(prompt);
+    try {
+      responseText = await callNvidiaFallback(prompt);
+    } catch (nvidiaErr: any) {
+      console.warn("[Extract] NVIDIA aussi indisponible, secours DeepSeek:", nvidiaErr.message);
+      responseText = await callDeepseekFallback(prompt);
+    }
   }
 
   const parsed = extractJson(responseText || "{}");
