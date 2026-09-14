@@ -475,7 +475,9 @@ async function callNvidiaFallback(prompt: string): Promise<string> {
   // "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" est confirmé déployé sur ce compte
   // (fourni directement par l'utilisateur depuis son tableau de bord build.nvidia.com) —
   // en premier. Les autres restent en secours si jamais celui-ci disparaît du catalogue.
-  const models = ["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", "meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct"];
+  // Les 2 autres modèles précédemment listés se sont révélés définitivement morts (410/404,
+  // pas transitoire) — on ne garde que celui confirmé fonctionnel pour ne plus perdre de temps.
+  const models = ["nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"];
   let lastErr: any;
   for (const model of models) {
     try {
@@ -535,17 +537,20 @@ async function callDeepseekFallback(prompt: string): Promise<string> {
 // Point d'entrée unique pour tout appel IA texte simple (hors extraction d'articles) —
 // même chaîne de secours Gemini -> NVIDIA -> DeepSeek, pour que le diagnostic ne dépende
 // pas uniquement du quota gratuit Gemini (20 requêtes/jour, vite épuisé).
+// Gemini est à quota quotidien épuisé et 2 modèles NVIDIA sur 3 se sont révélés morts —
+// DeepSeek s'est montré le plus fiable en pratique, on l'essaie en premier pour éviter
+// d'attendre inutilement des échecs prévisibles avant chaque recherche.
 async function generateWithFallback(prompt: string): Promise<string> {
   try {
-    const response = await getAIClient().models.generateContent({ model: "gemini-3.5-flash", contents: prompt });
-    return response.text || "";
-  } catch (geminiErr: any) {
-    console.warn("[IA] Gemini indisponible, secours NVIDIA:", geminiErr.message);
+    return await callDeepseekFallback(prompt);
+  } catch (deepseekErr: any) {
+    console.warn("[IA] DeepSeek indisponible, secours Gemini:", deepseekErr.message);
     try {
+      const response = await getAIClient().models.generateContent({ model: "gemini-3.5-flash", contents: prompt });
+      return response.text || "";
+    } catch (geminiErr: any) {
+      console.warn("[IA] Gemini aussi indisponible, secours NVIDIA:", geminiErr.message);
       return await callNvidiaFallback(prompt);
-    } catch (nvidiaErr: any) {
-      console.warn("[IA] NVIDIA aussi indisponible, secours DeepSeek:", nvidiaErr.message);
-      return await callDeepseekFallback(prompt);
     }
   }
 }
@@ -1052,19 +1057,19 @@ Réponds UNIQUEMENT en JSON, sans aucun texte avant/après, sans balises markdow
 
   let responseText: string;
   try {
-    const response = await getAIClient().models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: { responseMimeType: "application/json" },
-    });
-    responseText = response.text || "";
-  } catch (geminiErr: any) {
-    console.warn("[Extract] Gemini indisponible, secours NVIDIA:", geminiErr.message);
+    responseText = await callDeepseekFallback(prompt);
+  } catch (deepseekErr: any) {
+    console.warn("[Extract] DeepSeek indisponible, secours Gemini:", deepseekErr.message);
     try {
+      const response = await getAIClient().models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: prompt,
+        config: { responseMimeType: "application/json" },
+      });
+      responseText = response.text || "";
+    } catch (geminiErr: any) {
+      console.warn("[Extract] Gemini aussi indisponible, secours NVIDIA:", geminiErr.message);
       responseText = await callNvidiaFallback(prompt);
-    } catch (nvidiaErr: any) {
-      console.warn("[Extract] NVIDIA aussi indisponible, secours DeepSeek:", nvidiaErr.message);
-      responseText = await callDeepseekFallback(prompt);
     }
   }
 
