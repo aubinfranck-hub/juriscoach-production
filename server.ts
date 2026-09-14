@@ -443,6 +443,19 @@ function extractJson(text: string): any {
 
 // Secours quand Gemini est surchargé (503) : même tâche de structuration via un modèle
 // hébergé sur NVIDIA (build.nvidia.com), API compatible OpenAI.
+// Ajoute une limite de temps stricte à un fetch — sans ça, un appel qui ne répond jamais
+// bloque la tâche indéfiniment, ce qui a fini par provoquer un redémarrage du serveur
+// (tuant la tâche en cours) lors d'un essai précédent.
+async function fetchWithTimeout(url: string, options: any, timeoutMs = 25000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function callNvidiaFallback(prompt: string): Promise<string> {
   if (!process.env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY non configurée — pas de secours possible.");
   // Catalogue NVIDIA en évolution (des modèles y sont retirés régulièrement) — on essaie
@@ -454,14 +467,14 @@ async function callNvidiaFallback(prompt: string): Promise<string> {
   let lastErr: any;
   for (const model of models) {
     try {
-      const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+      const res = await fetchWithTimeout("https://integrate.api.nvidia.com/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NVIDIA_API_KEY}` },
         body: JSON.stringify({
           model, messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 8192,
           ...(model.includes("reasoning") ? { reasoning_budget: 4096, top_p: 0.95 } : {}),
         }),
-      });
+      }, 25000);
       if (!res.ok) {
         const errText = (await res.text()).slice(0, 200);
         console.warn(`[NVIDIA] Modèle ${model} indisponible (${res.status}): ${errText}`);
@@ -470,7 +483,8 @@ async function callNvidiaFallback(prompt: string): Promise<string> {
       }
       const data: any = await res.json();
       return data.choices?.[0]?.message?.content || "";
-    } catch (err) {
+    } catch (err: any) {
+      console.warn(`[NVIDIA] Modèle ${model} échoué/délai dépassé:`, err.message);
       lastErr = err;
     }
   }
@@ -491,7 +505,7 @@ function findDeepseekKey(): string | undefined {
 async function callDeepseekFallback(prompt: string): Promise<string> {
   const key = findDeepseekKey();
   if (!key) throw new Error("Clé DeepSeek non trouvée sous les noms de variable essayés.");
-  const res = await fetch("https://api.deepseek.com/chat/completions", {
+  const res = await fetchWithTimeout("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({
@@ -500,7 +514,7 @@ async function callDeepseekFallback(prompt: string): Promise<string> {
       temperature: 0.1,
       max_tokens: 8192,
     }),
-  });
+  }, 25000);
   if (!res.ok) throw new Error(`DeepSeek a répondu ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data: any = await res.json();
   return data.choices?.[0]?.message?.content || "";
