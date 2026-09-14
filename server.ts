@@ -1150,12 +1150,15 @@ app.post("/api/admin/extract-from-pdf-url", requireAdminAuth, (req, res) => {
         return;
       }
 
-      const totalChunks = Math.ceil(text.length / 42000);
+      const CHUNK_SIZE = 15000; // réduit (était 42000) — un morceau trop gros produit une
+      // réponse JSON trop longue pour la limite de sortie des modèles de secours (DeepSeek,
+      // NVIDIA), ce qui la tronque avant sa fin et casse le JSON.
+      const totalChunks = Math.ceil(text.length / CHUNK_SIZE);
       let totalInserted = 0, totalSkipped = 0;
-      for (let i = 0; i < text.length; i += 42000) {
-        const chunkNum = Math.floor(i / 42000) + 1;
+      for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+        const chunkNum = Math.floor(i / CHUNK_SIZE) + 1;
         extractJobs.set(jobId, { status: "running", message: "En cours...", progress: `Morceau ${chunkNum}/${totalChunks}`, totalInserted, totalSkipped });
-        const slice = text.slice(i, i + 42000);
+        const slice = text.slice(i, i + CHUNK_SIZE);
         if (slice.trim().length < 50) continue;
         try {
           const result = await extractAndStoreArticles(slice, sourceTitle, domain);
