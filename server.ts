@@ -445,19 +445,25 @@ function extractJson(text: string): any {
 // hébergé sur NVIDIA (build.nvidia.com), API compatible OpenAI.
 async function callNvidiaFallback(prompt: string): Promise<string> {
   if (!process.env.NVIDIA_API_KEY) throw new Error("NVIDIA_API_KEY non configurée — pas de secours possible.");
-  const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NVIDIA_API_KEY}` },
-    body: JSON.stringify({
-      model: "meta/llama-3.1-70b-instruct",
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.1,
-      max_tokens: 4096,
-    }),
-  });
-  if (!res.ok) throw new Error(`NVIDIA a répondu ${res.status}: ${(await res.text()).slice(0, 200)}`);
-  const data: any = await res.json();
-  return data.choices?.[0]?.message?.content || "";
+  // Catalogue NVIDIA en évolution (des modèles y sont retirés régulièrement) — on essaie
+  // plusieurs modèles dans l'ordre, pour ne pas dépendre d'un seul nom qui pourrait disparaître.
+  const models = ["meta/llama-3.3-70b-instruct", "nvidia/llama-3.1-nemotron-70b-instruct", "moonshotai/kimi-k2.6"];
+  let lastErr: any;
+  for (const model of models) {
+    try {
+      const res = await fetch("https://integrate.api.nvidia.com/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NVIDIA_API_KEY}` },
+        body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4096 }),
+      });
+      if (!res.ok) { lastErr = new Error(`NVIDIA (${model}) a répondu ${res.status}: ${(await res.text()).slice(0, 200)}`); continue; }
+      const data: any = await res.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error("Tous les modèles NVIDIA de secours ont échoué.");
 }
 
 // --- DIAGNOSTIC PÉNAL ---
