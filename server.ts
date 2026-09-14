@@ -456,7 +456,12 @@ async function callNvidiaFallback(prompt: string): Promise<string> {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.NVIDIA_API_KEY}` },
         body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], temperature: 0.1, max_tokens: 4096 }),
       });
-      if (!res.ok) { lastErr = new Error(`NVIDIA (${model}) a répondu ${res.status}: ${(await res.text()).slice(0, 200)}`); continue; }
+      if (!res.ok) {
+        const errText = (await res.text()).slice(0, 200);
+        console.warn(`[NVIDIA] Modèle ${model} indisponible (${res.status}): ${errText}`);
+        lastErr = new Error(`NVIDIA (${model}) a répondu ${res.status}: ${errText}`);
+        continue;
+      }
       const data: any = await res.json();
       return data.choices?.[0]?.message?.content || "";
     } catch (err) {
