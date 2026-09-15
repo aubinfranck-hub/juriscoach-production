@@ -1597,6 +1597,60 @@ app.post("/api/admin/seed-ohada-remaining", requireAdminAuth, async (req, res) =
   }
 });
 
+// --- Code du travail ivoirien (droit NATIONAL, pas OHADA — l'acte uniforme OHADA sur le
+// travail n'est jamais entré en vigueur) ---
+app.post("/api/admin/seed-code-travail", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Code du travail ivoirien'");
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    }
+
+    const { rows: sourceRows } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI', 'République de Côte d''Ivoire', 'TRAVAIL', 'CODE', 'Code du travail ivoirien', 'Loi n°2015-532 du 20 juillet 2015', 'ACTIVE') RETURNING id`
+    );
+    const sourceId = sourceRows[0].id;
+
+    const articles = [
+      {
+        article_number: "Art. 2", title: "Définition du travailleur",
+        official_text: "Est considéré comme travailleur ou salarié, quels que soient son sexe, sa race ou sa nationalité, toute personne physique qui s'est engagée à mettre son activité professionnelle, moyennant rémunération, sous la direction et l'autorité d'une autre personne physique ou morale, publique ou privée, appelée employeur.",
+        conditions: "Engagement de l'activité professionnelle\nMoyennant rémunération\nSous la direction et l'autorité d'un employeur (lien de subordination)",
+      },
+      {
+        article_number: "Art. 8", title: "Caractère d'ordre public",
+        official_text: "Sous réserve de dérogation expresse, les dispositions du présent Code sont d'ordre public. En conséquence, toute règle résultant d'une décision unilatérale, d'un contrat ou d'une convention et qui ne respecte pas les dispositions dudit Code ou des textes pris pour son application est nulle de plein droit.",
+        conditions: "Nullité de plein droit de toute clause moins favorable, sauf dérogation expresse prévue par le Code",
+      },
+      {
+        article_number: "Art. 18.9", title: "Licenciement pour motif économique",
+        official_text: "Constitue un licenciement pour motif économique, le licenciement opéré par un employeur en raison d'une suppression ou transformation d'emploi, consécutives notamment à des mutations technologiques, à une restructuration ou à des difficultés économiques de nature à compromettre l'équilibre financier de l'entreprise.",
+        conditions: "Suppression ou transformation d'emploi\nCause économique (mutation technologique, restructuration, difficultés financières)",
+      },
+      {
+        article_number: "Art. 18.15", title: "Licenciement abusif",
+        official_text: "Toute rupture abusive du contrat donne lieu à dommages-intérêts. Les licenciements effectués sans motif légitime ou en violation des dispositions de l'article 4 du présent Code, ou les licenciements économiques collectifs sans respect de la procédure requise ou pour faux motif, sont abusifs. La juridiction compétente constate l'abus par une enquête sur les causes et les circonstances de la rupture du contrat.",
+        conditions: "Absence de motif légitime, OU\nNon-respect de la procédure de licenciement économique, OU\nFaux motif invoqué",
+      },
+    ];
+
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,'TRAVAIL',$5,$6,$7)`,
+        [sourceId, art.article_number, art.title, art.official_text, art.title, art.conditions, `${art.title} ${art.official_text}`]
+      );
+    }
+
+    res.json({ success: true, message: `${articles.length} article(s) du Code du travail ivoirien ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed Code travail] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
 app.post("/api/documents/generate", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { dossier_id, document_type, recipient_name, recipient_address, facts_summary, amount_claimed_fcfa, deadline_days } = req.body;
