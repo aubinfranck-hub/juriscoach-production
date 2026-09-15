@@ -259,6 +259,26 @@ export default function AdminPanel({ token }: { token: string }) {
           </button>
         </form>
         {pdfResult && <p className="text-xs text-slate-400 mt-2.5">{pdfResult}</p>}
+        <button
+          type="button"
+          onClick={async () => {
+            setPdfResult("Fusion en cours...");
+            try {
+              const res = await fetch("/api/admin/merge-sources", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ fromTitle: "CODE PENAL", toTitle: "Code pénal ivoirien" }),
+              });
+              const data = await res.json();
+              setPdfResult(data.message || "Échec.");
+            } catch (err: any) {
+              setPdfResult(`Erreur : ${err?.message || "cause inconnue"}`);
+            }
+          }}
+          className="w-full mt-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2 rounded-xl cursor-pointer"
+        >
+          🔀 Fusionner "CODE PENAL" dans "Code pénal ivoirien"
+        </button>
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
