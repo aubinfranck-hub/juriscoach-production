@@ -1293,6 +1293,40 @@ app.post("/api/admin/extract-from-image", requireAdminAuth, async (req, res) => 
   }
 });
 
+// --- Fusion ponctuelle de deux sources en doublon (ex: "CODE PENAL" créé par erreur avec
+// un titre différent de "Code pénal ivoirien") : déplace tous les articles vers la source
+// principale, ignore les doublons déjà présents, puis supprime la source vide.
+app.post("/api/admin/merge-sources", requireAdminAuth, async (req, res) => {
+  const { fromTitle, toTitle } = req.body;
+  if (!fromTitle || !toTitle) return res.status(400).json({ success: false, message: "fromTitle et toTitle requis." });
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const fromRes = await pool.query("SELECT id FROM legal_sources WHERE title = $1", [fromTitle]);
+    const toRes = await pool.query("SELECT id FROM legal_sources WHERE title = $1", [toTitle]);
+    if (fromRes.rows.length === 0) return res.json({ success: false, message: `Source "${fromTitle}" introuvable.` });
+    if (toRes.rows.length === 0) return res.json({ success: false, message: `Source "${toTitle}" introuvable.` });
+    const fromId = fromRes.rows[0].id;
+    const toId = toRes.rows[0].id;
+    if (fromId === toId) return res.json({ success: false, message: "Les deux titres pointent déjà vers la même source." });
+
+    // Déplace ce qui n'est pas déjà en doublon dans la source cible.
+    const moved = await pool.query(
+      `UPDATE legal_articles SET source_id = $1
+       WHERE source_id = $2
+       AND article_number NOT IN (SELECT article_number FROM legal_articles WHERE source_id = $1)`,
+      [toId, fromId]
+    );
+    // Ce qui restait (doublons exacts) est simplement supprimé de l'ancienne source.
+    const deleted = await pool.query("DELETE FROM legal_articles WHERE source_id = $1", [fromId]);
+    await pool.query("DELETE FROM legal_sources WHERE id = $1", [fromId]);
+
+    res.json({ success: true, message: `${moved.rowCount} article(s) déplacés vers "${toTitle}", ${deleted.rowCount} doublon(s) supprimé(s), source "${fromTitle}" retirée.` });
+  } catch (err: any) {
+    console.error("[Merge sources] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
 app.post("/api/admin/seed-legal-data-2", requireAdminAuth, async (req, res) => {
   if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
   try {
