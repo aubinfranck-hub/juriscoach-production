@@ -1296,6 +1296,24 @@ app.post("/api/admin/extract-from-image", requireAdminAuth, async (req, res) => 
 // --- Fusion ponctuelle de deux sources en doublon (ex: "CODE PENAL" créé par erreur avec
 // un titre différent de "Code pénal ivoirien") : déplace tous les articles vers la source
 // principale, ignore les doublons déjà présents, puis supprime la source vide.
+// Vue d'ensemble de la base juridique : chaque source avec son nombre d'articles — pour
+// voir précisément ce qui est en base sans avoir à deviner via les journaux.
+app.get("/api/admin/sources-overview", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const result = await pool.query(`
+      SELECT s.id, s.title, s.domain, s.organization, COUNT(a.id) AS article_count
+      FROM legal_sources s
+      LEFT JOIN legal_articles a ON a.source_id = s.id
+      GROUP BY s.id, s.title, s.domain, s.organization
+      ORDER BY s.domain, s.title
+    `);
+    res.json({ success: true, sources: result.rows });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 app.post("/api/admin/merge-sources", requireAdminAuth, async (req, res) => {
   const { fromTitle, toTitle } = req.body;
   if (!fromTitle || !toTitle) return res.status(400).json({ success: false, message: "fromTitle et toTitle requis." });

@@ -34,6 +34,17 @@ export default function AdminPanel({ token }: { token: string }) {
   const [pdfEndPage, setPdfEndPage] = useState("");
   const [extractingPdf, setExtractingPdf] = useState(false);
   const [pdfResult, setPdfResult] = useState<string | null>(null);
+  const [sourcesOverview, setSourcesOverview] = useState<any[] | null>(null);
+
+  const loadSourcesOverview = async () => {
+    try {
+      const res = await fetch("/api/admin/sources-overview", { headers: { Authorization: `Bearer ${token}` } });
+      const data = await res.json();
+      setSourcesOverview(data.sources || []);
+    } catch {
+      setSourcesOverview([]);
+    }
+  };
 
   const handleExtractFromPdfUrl = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -279,6 +290,24 @@ export default function AdminPanel({ token }: { token: string }) {
         >
           🔀 Fusionner "CODE PENAL" dans "Code pénal ivoirien"
         </button>
+        <button
+          type="button" onClick={loadSourcesOverview}
+          className="w-full mt-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2 rounded-xl cursor-pointer"
+        >
+          📊 Voir l'état actuel de la base
+        </button>
+        {sourcesOverview && (
+          <div className="mt-2.5 space-y-1.5">
+            {sourcesOverview.length === 0 ? (
+              <p className="text-xs text-slate-500">Aucune source en base.</p>
+            ) : sourcesOverview.map((s) => (
+              <div key={s.id} className="flex justify-between text-xs bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5">
+                <span className="text-slate-300">{s.title} <span className="text-slate-600">({s.domain})</span></span>
+                <span className="text-amber-500 font-bold">{s.article_count}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
