@@ -258,6 +258,7 @@ export default function AdminPanel({ token }: { token: string }) {
               className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2.5 text-xs text-white">
               <option value="PENAL">Pénal</option>
               <option value="AFFAIRES">Affaires</option>
+              <option value="TRAVAIL">Travail</option>
             </select>
           </div>
           <div className="flex gap-2">
@@ -404,6 +405,7 @@ export default function AdminPanel({ token }: { token: string }) {
               className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2.5 text-xs text-white">
               <option value="PENAL">Pénal</option>
               <option value="AFFAIRES">Affaires</option>
+              <option value="TRAVAIL">Travail</option>
             </select>
           </div>
           <input
@@ -447,6 +449,7 @@ export default function AdminPanel({ token }: { token: string }) {
             className="bg-slate-950 border border-slate-700 rounded-xl px-2 py-2.5 text-xs text-white">
             <option value="PENAL">Pénal</option>
             <option value="AFFAIRES">Affaires</option>
+              <option value="TRAVAIL">Travail</option>
           </select>
         </div>
         <input
