@@ -1479,6 +1479,124 @@ app.post("/api/admin/seed-ohada-suretes", requireAdminAuth, async (req, res) => 
   }
 });
 
+// --- Ajout des 5 actes uniformes OHADA restants (procédures collectives, arbitrage,
+// comptable, transport routier, sociétés coopératives), articles clés vérifiés ---
+app.post("/api/admin/seed-ohada-remaining", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title LIKE '%procédures collectives%' OR title LIKE '%arbitrage%'");
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Ces actes sont déjà présents.", skipped: true });
+    }
+
+    const actes = [
+      {
+        title: "Acte uniforme portant organisation des procédures collectives d'apurement du passif (AUPC)",
+        reference: "Révisé le 10 septembre 2015 à Grand-Bassam (Côte d'Ivoire), entré en vigueur le 24 décembre 2015",
+        articles: [
+          {
+            article_number: "Art. 1", title: "Objet de l'acte uniforme",
+            official_text: "Le présent Acte uniforme a pour objet : d'organiser les procédures collectives de règlement préventif, de redressement judiciaire et de liquidation des biens du débiteur en vue de l'apurement collectif de son passif ; de définir les sanctions patrimoniales, professionnelles et pénales relatives à la défaillance du débiteur.",
+            conditions: "Débiteur en difficulté (prévention) ou en cessation des paiements (traitement)\nApurement collectif du passif au bénéfice de l'ensemble des créanciers",
+          },
+          {
+            article_number: "Art. 2-3", title: "Définitions : redressement judiciaire et liquidation des biens",
+            official_text: "Le redressement judiciaire est une procédure collective destinée au sauvetage de l'entreprise débitrice en cessation des paiements mais dont la situation n'est pas irrémédiablement compromise, et à l'apurement de son passif au moyen d'un concordat de redressement. La liquidation des biens est une procédure collective destinée à la réalisation de l'actif de l'entreprise débitrice en cessation des paiements dont la situation est irrémédiablement compromise pour apurer son passif.",
+            conditions: "Redressement : cessation des paiements mais situation non irrémédiablement compromise\nLiquidation : cessation des paiements et situation irrémédiablement compromise",
+          },
+        ],
+      },
+      {
+        title: "Acte uniforme relatif au droit de l'arbitrage (AUA)",
+        reference: "Révisé le 23 novembre 2017",
+        articles: [
+          {
+            article_number: "Art. 1", title: "Champ d'application",
+            official_text: "Le présent Acte uniforme a vocation à s'appliquer à tout arbitrage lorsque le siège du tribunal arbitral se trouve dans l'un des États Parties.",
+            conditions: "Siège du tribunal arbitral situé dans un État partie à l'OHADA",
+          },
+          {
+            article_number: "Art. 2", title: "Personnes pouvant recourir à l'arbitrage",
+            official_text: "Toute personne physique ou morale peut recourir à l'arbitrage sur les droits dont elle a la libre disposition. Les États, les autres collectivités publiques territoriales, les établissements publics et toute autre personne morale de droit public peuvent également être parties à un arbitrage, quelle que soit la nature juridique du contrat, sans pouvoir invoquer leur propre droit pour contester l'arbitrabilité d'un différend, leur capacité à compromettre ou la validité de la convention d'arbitrage.",
+            conditions: "Droits dont la personne a la libre disposition\nPersonnes physiques, morales privées ou publiques (États compris)",
+          },
+        ],
+      },
+      {
+        title: "Acte uniforme relatif au droit comptable et à l'information financière (AUDCIF)",
+        reference: "Adopté le 26 janvier 2017, publié le 15 février 2017, entré en vigueur le 1er janvier 2018",
+        articles: [
+          {
+            article_number: "Art. 2", title: "Champ d'application",
+            official_text: "Entrent dans le champ d'application de l'Acte uniforme relatif au droit comptable et à l'information financière toutes les entités produisant des biens et des services marchands ou non marchands, dans la mesure où elles exercent, dans un but lucratif ou non, des activités économiques à titre principal ou accessoires qui se fondent sur des actes répétitifs, à l'exception de celles soumises aux règles de la comptabilité publique.",
+            conditions: "Production de biens/services marchands ou non marchands\nActivité économique à titre principal ou accessoire, actes répétitifs\nException : entités soumises à la comptabilité publique",
+          },
+          {
+            article_number: "Art. 5", title: "Système comptable OHADA (SYSCOHADA)",
+            official_text: "Il est institué un système comptable unique, commun à tous les États parties composé du Plan comptable général OHADA et du Dispositif comptable relatif aux comptes consolidés et combinés, dénommé Système comptable OHADA en abrégé SYSCOHADA. Le SYSCOHADA a pour objet la collecte, la tenue, le contrôle, la présentation et la communication par les entités, d'informations financières établies dans les mêmes conditions de fiabilité, de compréhension et de comparabilité.",
+            conditions: "Applicable à toutes les entités visées à l'article 2\nExceptions : établissements de crédit, microfinance, marché financier, assurance/réassurance, sécurité sociale, entités à but non lucratif (référentiels propres)",
+          },
+        ],
+      },
+      {
+        title: "Acte uniforme relatif aux contrats de transport de marchandises par route (AUCTMR)",
+        reference: "Adopté le 22 mars 2003, entré en vigueur le 1er janvier 2004",
+        articles: [
+          {
+            article_number: "Art. 1", title: "Champ d'application",
+            official_text: "Le présent Acte uniforme s'applique à tout contrat de transport de marchandises par route lorsque le lieu de prise en charge de la marchandise et le lieu prévu pour la livraison, tels qu'ils sont indiqués au contrat, sont situés soit sur le territoire d'un État membre de l'OHADA, soit sur le territoire de deux États différents dont l'un au moins est membre de l'OHADA. L'Acte uniforme s'applique quels que soient le domicile et la nationalité des parties au contrat de transport.",
+            conditions: "Lieu de prise en charge et/ou de livraison dans un État membre OHADA\nExclusions : marchandises dangereuses, transports funéraires, déménagement, conventions postales internationales",
+          },
+          {
+            article_number: "Art. 3", title: "Définition du contrat de transport",
+            official_text: "Le contrat de transport de marchandise existe dès que le donneur d'ordre et le transporteur sont d'accord pour le déplacement d'une marchandise moyennant un prix convenu.",
+            conditions: "Accord entre donneur d'ordre et transporteur\nDéplacement d'une marchandise\nPrix convenu (le contrat existe par le seul accord, indépendamment de l'établissement d'une lettre de voiture)",
+          },
+        ],
+      },
+      {
+        title: "Acte uniforme relatif au droit des sociétés coopératives (AUSCOOP)",
+        reference: "Adopté le 15 décembre 2010 à Lomé (Togo), entré en vigueur le 15 mai 2011",
+        articles: [
+          {
+            article_number: "Art. 1", title: "Champ d'application",
+            official_text: "Toute société coopérative, toute union ou fédération de sociétés coopératives, dont le siège social est situé sur le territoire de l'un des États Parties au Traité relatif à l'harmonisation du droit des affaires en Afrique, est soumise aux dispositions du présent Acte uniforme. Toute confédération de sociétés coopératives qui fait option de la forme coopérative est également soumise aux dispositions du présent Acte uniforme.",
+            conditions: "Siège social dans un État partie OHADA\nApplicable aux sociétés, unions, fédérations et confédérations coopératives",
+          },
+          {
+            article_number: "Art. 2", title: "Caractère d'ordre public",
+            official_text: "Les dispositions du présent Acte uniforme sont d'ordre public, sauf dans les cas où il en dispose autrement.",
+            conditions: "Application impérative sauf dérogation expresse prévue par l'Acte uniforme lui-même",
+          },
+        ],
+      },
+    ];
+
+    let totalArticles = 0;
+    for (const acte of actes) {
+      const { rows: sourceRows } = await pool.query(
+        `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+         VALUES ('OHADA', 'OHADA', 'AFFAIRES', 'ACTE_UNIFORME', $1, $2, 'ACTIVE') RETURNING id`,
+        [acte.title, acte.reference]
+      );
+      const sourceId = sourceRows[0].id;
+      for (const art of acte.articles) {
+        await pool.query(
+          `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions, searchable_text)
+           VALUES ($1,$2,$3,$4,'AFFAIRES',$5,$6,$7)`,
+          [sourceId, art.article_number, art.title, art.official_text, art.title, art.conditions, `${art.title} ${art.official_text}`]
+        );
+        totalArticles++;
+      }
+    }
+
+    res.json({ success: true, message: `${totalArticles} article(s) ajoutés sous ${actes.length} nouveaux actes uniformes OHADA.` });
+  } catch (err: any) {
+    console.error("[Seed OHADA remaining] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec de l'alimentation : " + err.message });
+  }
+});
+
 app.post("/api/documents/generate", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { dossier_id, document_type, recipient_name, recipient_address, facts_summary, amount_claimed_fcfa, deadline_days } = req.body;

@@ -19,6 +19,7 @@ export default function AdminPanel({ token }: { token: string }) {
   const [seedingOhada, setSeedingOhada] = useState(false);
   const [seedingPenal2, setSeedingPenal2] = useState(false);
   const [seedingOhadaSuretes, setSeedingOhadaSuretes] = useState(false);
+  const [seedingOhadaRemaining, setSeedingOhadaRemaining] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
 
   const [extractText, setExtractText] = useState("");
@@ -367,6 +368,13 @@ export default function AdminPanel({ token }: { token: string }) {
             <Scale className="w-3.5 h-3.5" /> {seedingOhadaSuretes ? "..." : "OHADA : Sûretés"}
           </button>
         </div>
+        <button
+          onClick={() => handleSeed("/api/admin/seed-ohada-remaining", setSeedingOhadaRemaining)}
+          disabled={seedingOhadaRemaining}
+          className="w-full mt-2.5 flex items-center justify-center gap-2 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+        >
+          <Scale className="w-3.5 h-3.5" /> {seedingOhadaRemaining ? "..." : "OHADA : 5 actes restants (procédures collectives, arbitrage, comptable, transport, coopératives)"}
+        </button>
         {seedResult && <p className="text-xs text-slate-400 mt-2.5">{seedResult}</p>}
       </div>
 
