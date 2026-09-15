@@ -291,6 +291,27 @@ export default function AdminPanel({ token }: { token: string }) {
           🔀 Fusionner "CODE PENAL" dans "Code pénal ivoirien"
         </button>
         <button
+          type="button"
+          onClick={async () => {
+            if (!confirm('Fusionner TOUTES les sources PENAL (Code, Code penal, Code pénal, etc.) en une seule "Code pénal ivoirien" ?')) return;
+            setPdfResult("Fusion générale en cours...");
+            try {
+              const res = await fetch("/api/admin/merge-all-in-domain", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                body: JSON.stringify({ domain: "PENAL", canonicalTitle: "Code pénal ivoirien" }),
+              });
+              const data = await res.json();
+              setPdfResult(data.message || "Échec.");
+            } catch (err: any) {
+              setPdfResult(`Erreur : ${err?.message || "cause inconnue"}`);
+            }
+          }}
+          className="w-full mt-2 bg-red-800 hover:bg-red-700 text-white text-xs font-semibold py-2 rounded-xl cursor-pointer"
+        >
+          🔀 Fusionner TOUTES les sources PENAL en une seule
+        </button>
+        <button
           type="button" onClick={loadSourcesOverview}
           className="w-full mt-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2 rounded-xl cursor-pointer"
         >

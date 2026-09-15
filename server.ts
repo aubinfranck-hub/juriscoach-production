@@ -1345,6 +1345,54 @@ app.post("/api/admin/merge-sources", requireAdminAuth, async (req, res) => {
   }
 });
 
+// Fusionne TOUTES les sources d'un même domaine (ex: PENAL) en une seule, désignée par
+// canonicalTitle — corrige d'un coup l'accumulation de titres légèrement différents créés
+// au fil de plusieurs envois ("Code", "Code penal", "Code pénal", "CODE PENAL IVOIRIEN"...).
+app.post("/api/admin/merge-all-in-domain", requireAdminAuth, async (req, res) => {
+  const { domain, canonicalTitle } = req.body;
+  if (!domain || !canonicalTitle) return res.status(400).json({ success: false, message: "domain et canonicalTitle requis." });
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    // Crée la source canonique si elle n'existe pas encore.
+    let canonicalRes = await pool.query("SELECT id FROM legal_sources WHERE title = $1", [canonicalTitle]);
+    let canonicalId: number;
+    if (canonicalRes.rows.length === 0) {
+      const created = await pool.query(
+        `INSERT INTO legal_sources (country, organization, domain, source_type, title, status)
+         VALUES ('CI', 'République de Côte d''Ivoire', $1, 'CODE', $2, 'ACTIVE') RETURNING id`,
+        [domain, canonicalTitle]
+      );
+      canonicalId = created.rows[0].id;
+    } else {
+      canonicalId = canonicalRes.rows[0].id;
+    }
+
+    const others = await pool.query("SELECT id, title FROM legal_sources WHERE domain = $1 AND id != $2", [domain, canonicalId]);
+    let totalMoved = 0, totalDupesRemoved = 0;
+    for (const src of others.rows) {
+      const moved = await pool.query(
+        `UPDATE legal_articles SET source_id = $1
+         WHERE source_id = $2
+         AND article_number NOT IN (SELECT article_number FROM legal_articles WHERE source_id = $1)`,
+        [canonicalId, src.id]
+      );
+      const deleted = await pool.query("DELETE FROM legal_articles WHERE source_id = $1", [src.id]);
+      await pool.query("DELETE FROM legal_sources WHERE id = $1", [src.id]);
+      totalMoved += moved.rowCount || 0;
+      totalDupesRemoved += deleted.rowCount || 0;
+    }
+
+    const finalCount = await pool.query("SELECT COUNT(*) FROM legal_articles WHERE source_id = $1", [canonicalId]);
+    res.json({
+      success: true,
+      message: `${others.rows.length} source(s) fusionnée(s) dans "${canonicalTitle}". ${totalMoved} article(s) déplacés, ${totalDupesRemoved} doublon(s) supprimés. Total final : ${finalCount.rows[0].count} articles.`,
+    });
+  } catch (err: any) {
+    console.error("[Merge all in domain] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
 app.post("/api/admin/seed-legal-data-2", requireAdminAuth, async (req, res) => {
   if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
   try {
