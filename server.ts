@@ -1651,6 +1651,59 @@ app.post("/api/admin/seed-code-travail", requireAdminAuth, async (req, res) => {
   }
 });
 
+// --- Loi relative au mariage (droit de la famille, Loi n°2019-570) ---
+app.post("/api/admin/seed-loi-mariage", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Loi relative au mariage'");
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    }
+
+    const { rows: sourceRows } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI', 'République de Côte d''Ivoire', 'FAMILLE', 'CODE', 'Loi relative au mariage', 'Loi n°2019-570 du 26 juin 2019', 'ACTIVE') RETURNING id`
+    );
+    const sourceId = sourceRows[0].id;
+
+    const articles = [
+      {
+        article_number: "Art. 1", title: "Définition du mariage",
+        official_text: "Le mariage est l'union d'un homme et d'une femme célébrée par devant l'officier de l'état civil.",
+        conditions: "Union entre un homme et une femme\nCélébration devant l'officier de l'état civil (seule forme ayant des effets légaux)",
+      },
+      {
+        article_number: "Art. 2", title: "Âge légal du mariage",
+        official_text: "L'homme et la femme avant dix-huit ans révolus ne peuvent contracter mariage.",
+        conditions: "Âge minimum de 18 ans révolus pour les deux époux",
+      },
+      {
+        article_number: "Art. 3", title: "Interdiction de la bigamie",
+        official_text: "Nul ne peut contracter un nouveau mariage avant la dissolution du précédent constatée soit par une décision devenue définitive, soit par un acte de décès. Au cas où le mariage est dissous par le divorce ou annulé, une nouvelle union ne peut être contractée avant l'accomplissement des formalités de mention en marge de l'acte de mariage et des actes de naissance des époux, du dispositif du jugement ou de l'arrêt qui prononce le divorce.",
+        conditions: "Dissolution du mariage précédent (décision définitive ou acte de décès)\nMentions marginales accomplies en cas de divorce/annulation avant tout nouveau mariage",
+      },
+      {
+        article_number: "Art. 4", title: "Consentement des époux",
+        official_text: "Chacun des futurs époux doit consentir personnellement au mariage. Le consentement n'est pas valable s'il a été extorqué par la violence ou s'il n'a été donné que par suite d'une erreur sur l'identité physique ou civile de la personne.",
+        conditions: "Consentement personnel et libre de chaque époux\nAbsence de violence ou d'erreur sur l'identité de la personne",
+      },
+    ];
+
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,'FAMILLE',$5,$6,$7)`,
+        [sourceId, art.article_number, art.title, art.official_text, art.title, art.conditions, `${art.title} ${art.official_text}`]
+      );
+    }
+
+    res.json({ success: true, message: `${articles.length} article(s) de la Loi relative au mariage ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed loi mariage] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
 app.post("/api/documents/generate", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { dossier_id, document_type, recipient_name, recipient_address, facts_summary, amount_claimed_fcfa, deadline_days } = req.body;
