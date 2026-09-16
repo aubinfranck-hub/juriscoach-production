@@ -1,10 +1,11 @@
 import express from "express";
+import { WebSocketServer } from "ws";
 import cors from "cors";
 import pg from "pg";
 import path from "path";
 import crypto from "crypto";
 import rateLimit from "express-rate-limit";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity } from "@google/genai";
 import pdfParse from "pdf-parse";
 
 const app = express();
@@ -1853,8 +1854,138 @@ async function startServer() {
 
   // Le serveur écoute immédiatement, sans attendre la base — évite tout blocage si la base
   // (plan gratuit) est endormie et met du temps à répondre.
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`JurisCoach running on port ${PORT}`);
+  });
+
+  // --- Bridge vocal Gemini Live (fonctionnalité Live, réservée aux comptes Pro) ---
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on("upgrade", (request, socket, head) => {
+    const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
+    if (pathname === "/api/live-ws") {
+      const token = searchParams.get("token") || "";
+      const session = sessions.get(token);
+      if (!token || !session) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const acc = userAccounts.get(session.phone);
+      if (!acc?.isPro) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit("connection", ws, request);
+      });
+    }
+  });
+
+  wss.on("connection", (clientWs) => {
+    console.log("[WebSocket] Client connecté au bridge vocal Live.");
+    let geminiSession: any = null;
+    let isClosed = false;
+
+    clientWs.on("message", async (data) => {
+      try {
+        const message = JSON.parse(data.toString());
+
+        if (message.type === "start") {
+          const systemInstruction = `Tu es JurisCoach, un assistant juridique vocal spécialisé en droit ivoirien (Code pénal, droit OHADA, Code du travail, Code foncier). Tu accompagnes une personne qui te pose des questions juridiques à voix haute, comme le ferait un avocat au téléphone.
+
+RÈGLE D'IDENTITÉ :
+- Ton nom est JurisCoach. Si on te demande qui tu es, réponds : "JurisCoach, je vous écoute."
+
+TON ET STYLE :
+- Vouvoie toujours la personne, avec sérieux et bienveillance professionnelle.
+- Réponses courtes et claires (2-3 phrases maximum) pour un échange vocal fluide.
+- Cite les articles de loi pertinents quand tu les connais (numéro + résumé), sans les réciter en entier à voix haute.
+- Si l'information exacte n'est pas certaine, dis-le clairement plutôt que d'inventer un article ou un numéro.
+
+RAPPEL IMPORTANT (à dire une fois en début d'échange) :
+- Précise que ce diagnostic vocal est une aide informative et ne remplace pas la consultation d'un avocat pour un dossier réel.
+
+FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisques, pas de hashtags, pas de puces). Phrases fluides et naturelles uniquement.`;
+
+          try {
+            geminiSession = await getAIClient().live.connect({
+              model: "gemini-3.1-flash-live-preview",
+              config: {
+                responseModalities: [Modality.AUDIO],
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Charon" } } },
+                systemInstruction,
+                outputAudioTranscription: {},
+                inputAudioTranscription: {},
+                realtimeInputConfig: {
+                  automaticActivityDetection: {
+                    disabled: false,
+                    startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+                    endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_HIGH,
+                    prefixPaddingMs: 20,
+                    silenceDurationMs: 300,
+                  },
+                },
+              },
+              callbacks: {
+                onmessage: (msg: any) => {
+                  if (isClosed) return;
+                  const modelParts = msg.serverContent?.modelTurn?.parts;
+                  if (modelParts && Array.isArray(modelParts)) {
+                    for (const part of modelParts) {
+                      if (part.inlineData?.data) clientWs.send(JSON.stringify({ type: "audio", audio: part.inlineData.data }));
+                      if (part.text) clientWs.send(JSON.stringify({ type: "text", text: part.text }));
+                    }
+                  }
+                  const userParts = msg.serverContent?.userTurn?.parts;
+                  if (userParts && Array.isArray(userParts)) {
+                    for (const part of userParts) {
+                      if (part.text) clientWs.send(JSON.stringify({ type: "userTranscript", text: part.text }));
+                    }
+                  }
+                  if (msg.serverContent?.interrupted) clientWs.send(JSON.stringify({ type: "interrupted" }));
+                  if (msg.serverContent?.turnComplete) clientWs.send(JSON.stringify({ type: "turnComplete" }));
+                },
+                onclose: () => {
+                  console.log("[WebSocket] Session Gemini Live fermée.");
+                  if (!isClosed) { clientWs.send(JSON.stringify({ type: "closed" })); clientWs.close(); }
+                },
+                onerror: (err: any) => {
+                  console.error("[WebSocket] Erreur Gemini Live:", err);
+                  if (!isClosed) clientWs.send(JSON.stringify({ type: "error", message: "Erreur de connexion vocale avec l'IA." }));
+                },
+              },
+            });
+
+            clientWs.send(JSON.stringify({ type: "connected" }));
+            geminiSession.sendClientContent({
+              turns: [{ role: "user", parts: [{ text: "JurisCoach, signale ta présence en disant : 'JurisCoach, je vous écoute.' puis rappelle en une phrase que ce diagnostic vocal est informatif et ne remplace pas un avocat." }] }],
+            });
+          } catch (err: any) {
+            console.error("[WebSocket] Échec connexion Gemini Live:", err);
+            clientWs.send(JSON.stringify({ type: "error", message: "Impossible de démarrer la session vocale : " + err.message }));
+            clientWs.close();
+          }
+        } else if (message.type === "audio") {
+          if (geminiSession) {
+            geminiSession.sendRealtimeInput({ audio: { data: message.audio, mimeType: "audio/pcm;rate=16000" } });
+          }
+        } else if (message.type === "text") {
+          if (geminiSession) {
+            geminiSession.sendClientContent({ turns: [{ role: "user", parts: [{ text: message.text }] }] });
+          }
+        }
+      } catch (err: any) {
+        console.error("[WebSocket] Erreur traitement message:", err);
+      }
+    });
+
+    clientWs.on("close", () => {
+      console.log("[WebSocket] Client déconnecté du bridge vocal Live.");
+      isClosed = true;
+      if (geminiSession) { try { geminiSession.close(); } catch (e) {} }
+    });
   });
 
   try {
