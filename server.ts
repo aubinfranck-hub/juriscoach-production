@@ -31,7 +31,7 @@ function hashPassword(password: string, salt: string): string {
   return crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
 }
 
-const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean }>();
+const userAccounts = new Map<string, { passwordHash: string; salt: string; createdAt: number; isAdmin: boolean; isPro: boolean }>();
 const sessions = new Map<string, { phone: string; createdAt: number }>();
 const loginAttempts = new Map<string, { count: number; firstAttempt: number }>();
 
@@ -39,7 +39,7 @@ function createAccount(phone: string, password: string, isAdmin = false): void {
   const salt = crypto.randomBytes(16).toString("hex");
   const passwordHash = hashPassword(password, salt);
   const existing = userAccounts.get(phone);
-  userAccounts.set(phone, { passwordHash, salt, createdAt: existing?.createdAt ?? Date.now(), isAdmin });
+  userAccounts.set(phone, { passwordHash, salt, createdAt: existing?.createdAt ?? Date.now(), isAdmin, isPro: existing?.isPro ?? false });
   persistAccount(phone).catch(() => {});
 }
 
@@ -62,9 +62,9 @@ async function persistAccount(phone: string): Promise<void> {
   if (!acc) return;
   try {
     await pool.query(
-      `INSERT INTO accounts (phone, password_hash, salt, created_at, is_admin) VALUES ($1,$2,$3,$4,$5)
-       ON CONFLICT (phone) DO UPDATE SET password_hash=$2, salt=$3, is_admin=$5`,
-      [phone, acc.passwordHash, acc.salt, acc.createdAt, acc.isAdmin]
+      `INSERT INTO accounts (phone, password_hash, salt, created_at, is_admin, is_pro) VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT (phone) DO UPDATE SET password_hash=$2, salt=$3, is_admin=$5, is_pro=$6`,
+      [phone, acc.passwordHash, acc.salt, acc.createdAt, acc.isAdmin, acc.isPro]
     );
   } catch (err: any) {
     console.error("[DB] Échec sauvegarde compte:", err.message);
@@ -132,7 +132,8 @@ async function initDatabase(): Promise<void> {
       password_hash TEXT NOT NULL,
       salt TEXT NOT NULL,
       created_at BIGINT NOT NULL,
-      is_admin BOOLEAN NOT NULL DEFAULT false
+      is_admin BOOLEAN NOT NULL DEFAULT false,
+      is_pro BOOLEAN NOT NULL DEFAULT false
     );
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
@@ -326,12 +327,19 @@ async function initDatabase(): Promise<void> {
     console.warn("[DB] Élargissement des colonnes diagnostic_results échoué :", err.message);
   }
 
+  // Ajoute is_pro aux comptes déjà existants (créés avant l'introduction du statut Pro).
+  try {
+    await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_pro BOOLEAN NOT NULL DEFAULT false`);
+  } catch (err: any) {
+    console.warn("[DB] Ajout de is_pro échoué :", err.message);
+  }
+
   const accountsRes = await pool.query("SELECT * FROM accounts");
   for (const row of accountsRes.rows) {
     const cleanPhone = normalizePhone(row.phone);
     userAccounts.set(cleanPhone, {
       passwordHash: row.password_hash, salt: row.salt,
-      createdAt: Number(row.created_at), isAdmin: row.is_admin,
+      createdAt: Number(row.created_at), isAdmin: row.is_admin, isPro: row.is_pro === true,
     });
   }
   const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -398,12 +406,25 @@ app.post("/api/auth/login", authLimiter, (req, res) => {
     }
   }
   const token = createSession(matchedPhone);
-  res.json({ success: true, sessionToken: token, isAdmin: isAdminAccount });
+  const isProAccount = userAccounts.get(matchedPhone)?.isPro === true;
+  res.json({ success: true, sessionToken: token, isAdmin: isAdminAccount, isPro: isProAccount });
 });
 
 app.get("/api/user/status", requireAuth, (req: any, res) => {
   const acc = userAccounts.get(req.session.phone);
-  res.json({ success: true, phone: req.session.phone, isAdmin: acc?.isAdmin === true });
+  res.json({ success: true, phone: req.session.phone, isAdmin: acc?.isAdmin === true, isPro: acc?.isPro === true });
+});
+
+app.post("/api/admin/toggle-pro", requireAdminAuth, async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ success: false, message: "phone requis." });
+  const cleanPhone = normalizePhone(phone);
+  const acc = userAccounts.get(cleanPhone);
+  if (!acc) return res.status(404).json({ success: false, message: "Compte introuvable." });
+  acc.isPro = !acc.isPro;
+  userAccounts.set(cleanPhone, acc);
+  await persistAccount(cleanPhone);
+  res.json({ success: true, isPro: acc.isPro, message: `Statut Pro ${acc.isPro ? "activé" : "désactivé"} pour ${cleanPhone}.` });
 });
 
 app.post("/api/admin/create-account", requireAdminAuth, (req, res) => {
@@ -418,7 +439,7 @@ app.post("/api/admin/create-account", requireAdminAuth, (req, res) => {
 
 app.get("/api/admin/accounts", requireAdminAuth, (req, res) => {
   const accounts = Array.from(userAccounts.entries()).map(([phone, acc]) => ({
-    phone, createdAt: acc.createdAt, isAdmin: acc.isAdmin,
+    phone, createdAt: acc.createdAt, isAdmin: acc.isAdmin, isPro: acc.isPro,
   }));
   res.json({ success: true, accounts });
 });

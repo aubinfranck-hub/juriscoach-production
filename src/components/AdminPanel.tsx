@@ -5,6 +5,7 @@ interface Account {
   phone: string;
   createdAt: number;
   isAdmin: boolean;
+  isPro: boolean;
 }
 
 export default function AdminPanel({ token }: { token: string }) {
@@ -515,9 +516,26 @@ export default function AdminPanel({ token }: { token: string }) {
           {accounts.map((a) => (
             <div key={a.phone} className="bg-slate-950 rounded-xl p-3 flex items-center justify-between">
               <span className="text-xs font-mono text-white">{a.phone}</span>
-              <button onClick={() => resetPassword(a.phone)} className="text-[10px] font-medium bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full cursor-pointer hover:bg-slate-700">
-                Réinitialiser
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={async () => {
+                    await fetch("/api/admin/toggle-pro", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ phone: a.phone }),
+                    });
+                    load();
+                  }}
+                  className={`text-[10px] font-bold px-2.5 py-1 rounded-full cursor-pointer ${
+                    a.isPro ? "bg-amber-600 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700"
+                  }`}
+                >
+                  {a.isPro ? "✓ Pro" : "Activer Pro"}
+                </button>
+                <button onClick={() => resetPassword(a.phone)} className="text-[10px] font-medium bg-slate-800 text-slate-300 px-2.5 py-1 rounded-full cursor-pointer hover:bg-slate-700">
+                  Réinitialiser
+                </button>
+              </div>
             </div>
           ))}
         </div>
