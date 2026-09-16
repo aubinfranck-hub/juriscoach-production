@@ -21,6 +21,7 @@ export default function AdminPanel({ token }: { token: string }) {
   const [seedingOhadaSuretes, setSeedingOhadaSuretes] = useState(false);
   const [seedingOhadaRemaining, setSeedingOhadaRemaining] = useState(false);
   const [seedingCodeTravail, setSeedingCodeTravail] = useState(false);
+  const [seedingCodeFoncier, setSeedingCodeFoncier] = useState(false);
   const [seedingLoiMariage, setSeedingLoiMariage] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
 
@@ -384,6 +385,13 @@ export default function AdminPanel({ token }: { token: string }) {
           className="w-full mt-2.5 flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
         >
           <Scale className="w-3.5 h-3.5" /> {seedingCodeTravail ? "..." : "Code du travail ivoirien (droit national, 4 articles)"}
+        </button>
+        <button
+          onClick={() => handleSeed("/api/admin/seed-code-foncier", setSeedingCodeFoncier)}
+          disabled={seedingCodeFoncier}
+          className="w-full mt-2.5 flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl cursor-pointer"
+        >
+          <Scale className="w-3.5 h-3.5" /> {seedingCodeFoncier ? "..." : "Code foncier rural ivoirien (droit national, 4 articles)"}
         </button>
         <button
           onClick={() => handleSeed("/api/admin/seed-loi-mariage", setSeedingLoiMariage)}

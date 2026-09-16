@@ -1651,7 +1651,59 @@ app.post("/api/admin/seed-code-travail", requireAdminAuth, async (req, res) => {
   }
 });
 
-// --- Loi relative au mariage (droit de la famille, Loi n°2019-570) ---
+// --- Code foncier rural ivoirien (Loi n°98-750 du 23 décembre 1998, modifiée) ---
+app.post("/api/admin/seed-code-foncier", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Code foncier rural ivoirien'");
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    }
+
+    const { rows: sourceRows } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI', 'République de Côte d''Ivoire', 'FONCIER', 'CODE', 'Code foncier rural ivoirien', 'Loi n°98-750 du 23 décembre 1998, modifiée par les lois n°2004-412, n°2013-655 et n°2019-868', 'ACTIVE') RETURNING id`
+    );
+    const sourceId = sourceRows[0].id;
+
+    const articles = [
+      {
+        article_number: "Art. 1", title: "Définition du domaine foncier rural",
+        official_text: "Le Domaine Foncier Rural est constitué par l'ensemble des terres mises en valeur ou non et quelle que soit la nature de la mise en valeur. Il constitue un patrimoine national auquel toute personne physique ou morale peut accéder. Toutefois, seuls l'État, les Collectivités publiques et les personnes physiques ivoiriennes sont admis à en être propriétaires.",
+        conditions: "Terres mises en valeur ou non\nPatrimoine national\nPropriété réservée à l'État, aux collectivités publiques et aux personnes physiques ivoiriennes",
+      },
+      {
+        article_number: "Art. 2", title: "Composition du domaine foncier rural",
+        official_text: "Le Domaine Foncier Rural est à la fois : hors du domaine public ; hors des périmètres urbains ; hors des zones d'aménagement différé dûment constituées ; hors du domaine forestier classé et des aires protégées ; hors des zones touristiques dûment constituées.",
+        conditions: "Exclusion du domaine public, des périmètres urbains, des zones d'aménagement différé, du domaine forestier classé/aires protégées et des zones touristiques constituées",
+      },
+      {
+        article_number: "Art. 3", title: "Domaine foncier rural coutumier",
+        official_text: "Le Domaine Foncier Rural coutumier est constitué par l'ensemble des terres sur lesquelles s'exercent : des droits coutumiers conformes aux traditions ; des droits coutumiers cédés à des tiers.",
+        conditions: "Exercice de droits coutumiers conformes aux traditions\nOu droits coutumiers ayant fait l'objet d'une cession à un tiers",
+      },
+      {
+        article_number: "Art. 4", title: "Établissement de la propriété",
+        official_text: "La propriété d'une terre du Domaine Foncier Rural est établie à partir de l'immatriculation de cette terre au Registre Foncier ouvert à cet effet par l'Administration et, en ce qui concerne les terres du domaine coutumier, par le Certificat Foncier.",
+        conditions: "Immatriculation au Registre Foncier (terres hors coutumier)\nOu délivrance d'un Certificat Foncier (terres du domaine coutumier)",
+      },
+    ];
+
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions, searchable_text)
+         VALUES ($1,$2,$3,$4,'FONCIER',$5,$6,$7)`,
+        [sourceId, art.article_number, art.title, art.official_text, art.title, art.conditions, `${art.title} ${art.official_text}`]
+      );
+    }
+
+    res.json({ success: true, message: `${articles.length} article(s) du Code foncier rural ivoirien ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed Code foncier] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
 app.post("/api/admin/seed-loi-mariage", requireAdminAuth, async (req, res) => {
   if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
   try {
