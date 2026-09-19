@@ -2088,6 +2088,230 @@ app.post("/api/admin/seed-code-construction", requireAdminAuth, async (req, res)
     console.error("[Seed Code Construction] Échec:", err.message);
     res.status(500).json({ success: false, message: "Échec : " + err.message });
   }
+app.post("/api/admin/seed-code-civil", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Code Civil de Côte d''Ivoire'");
+    if (Number(existing[0].count) > 0) return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    const { rows: src } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI','République de Côte d''Ivoire','CIVIL','CODE','Code Civil de Côte d''Ivoire','Loi n°2019-573 et textes modifiés','ACTIVE') RETURNING id`
+    );
+    const sourceId = src[0].id;
+    const articles: any[] = [
+      { article_number: "Art. 1", title: "Application de la loi dans le temps", official_text: "Les lois ne disposent que pour l'avenir ; elles n'ont point d'effet rétroactif.", conditions: "Principe de non-rétroactivité de la loi" },
+      { article_number: "Art. 7", title: "Jouissance des droits civils", official_text: "L'exercice des droits civils est indépendant de l'exercice des droits politiques. Tout individu a la jouissance des droits civils.", conditions: "Toute personne physique sur le territoire ivoirien" },
+      { article_number: "Art. 57", title: "Acte de naissance", official_text: "Les naissances sont déclarées dans les quinze jours de l'accouchement à l'officier de l'état civil du lieu de naissance.", conditions: "Naissance sur le territoire de Côte d'Ivoire" },
+      { article_number: "Art. 63", title: "Mariage — publications", official_text: "Avant la célébration du mariage, l'officier de l'état civil fera une publication par voie d'affiche apposée à la porte de la mairie.", conditions: "Célébration d'un mariage civil" },
+      { article_number: "Art. 67", title: "Conditions de fond du mariage", official_text: "Le mariage est contracté entre un homme et une femme. L'homme avant dix-huit ans révolus, la femme avant dix-huit ans révolus ne peuvent contracter mariage.", conditions: "Âge minimum requis pour le mariage" },
+      { article_number: "Art. 68", title: "Consentement au mariage", official_text: "Il n'y a pas de mariage lorsqu'il n'y a point de consentement. Le consentement doit être libre et éclairé.", conditions: "Validité du consentement matrimonial" },
+      { article_number: "Art. 142", title: "Divorce par consentement mutuel", official_text: "Le divorce peut être demandé conjointement par les époux lorsqu'ils s'entendent sur la rupture du mariage et ses effets.", conditions: "Accord des deux époux sur le divorce et ses conséquences", procedure_type: "Judiciaire — consentement mutuel" },
+      { article_number: "Art. 149", title: "Divorce pour faute", official_text: "Un époux peut demander le divorce pour faute lorsque l'autre a commis une violation grave ou renouvelée des devoirs et obligations du mariage.", conditions: "Faute grave ou répétée d'un époux", procedure_type: "Judiciaire — contentieux" },
+      { article_number: "Art. 203", title: "Obligation alimentaire entre époux", official_text: "Les époux contractent ensemble l'obligation de nourrir, entretenir et élever leurs enfants.", conditions: "Existence d'enfants communs" },
+      { article_number: "Art. 207", title: "Pension alimentaire", official_text: "Les aliments ne sont accordés que dans la proportion du besoin de celui qui les réclame et de la fortune de celui qui les doit.", conditions: "Demande de pension alimentaire" },
+      { article_number: "Art. 229", title: "Filiation — présomption de paternité", official_text: "L'enfant conçu pendant le mariage a pour père le mari. Cette présomption est écartée si l'enfant est né plus de trois cents jours après la dissolution du mariage.", conditions: "Enfant né pendant ou après le mariage" },
+      { article_number: "Art. 311", title: "Reconnaissance d'enfant naturel", official_text: "La filiation naturelle est légalement établie par la reconnaissance volontaire. La reconnaissance peut être faite avant la naissance, dans l'acte de naissance ou postérieurement.", conditions: "Enfant né hors mariage" },
+      { article_number: "Art. 375", title: "Autorité parentale", official_text: "L'autorité parentale est un ensemble de droits et de devoirs ayant pour finalité l'intérêt de l'enfant. Elle appartient aux père et mère jusqu'à la majorité ou l'émancipation.", conditions: "Exercice de l'autorité sur un enfant mineur" },
+      { article_number: "Art. 389", title: "Tutelle des mineurs", official_text: "Lorsque les père et mère sont tous deux décédés ou se trouvent privés de l'exercice de l'autorité parentale, il est ouvert une tutelle.", conditions: "Décès ou déchéance des deux parents" },
+      { article_number: "Art. 516", title: "Classification des biens", official_text: "Tous les biens sont meubles ou immeubles.", conditions: "Qualification juridique d'un bien" },
+      { article_number: "Art. 544", title: "Droit de propriété", official_text: "La propriété est le droit de jouir et disposer des choses de la manière la plus absolue, pourvu qu'on n'en fasse pas un usage prohibé par les lois ou par les règlements.", conditions: "Exercice du droit de propriété" },
+      { article_number: "Art. 545", title: "Expropriation — indemnisation", official_text: "Nul ne peut être contraint de céder sa propriété, si ce n'est pour cause d'utilité publique, et moyennant une juste et préalable indemnité.", conditions: "Expropriation pour utilité publique" },
+      { article_number: "Art. 711", title: "Modes d'acquisition de la propriété", official_text: "La propriété des biens s'acquiert et se transmet par succession, donation entre vifs ou testamentaire, et par l'effet des obligations.", conditions: "Transfert de propriété" },
+      { article_number: "Art. 720", title: "Succession ab intestat", official_text: "Les successions sont dévolues selon les règles légales lorsque le défunt n'a pas disposé de ses biens par testament.", conditions: "Décès sans testament" },
+      { article_number: "Art. 731", title: "Ordre des héritiers", official_text: "Les successions sont dévolues aux enfants et descendants, aux père et mère et autres ascendants, et aux collatéraux du défunt selon les règles fixées par la présente loi.", conditions: "Détermination des héritiers légaux" },
+      { article_number: "Art. 893", title: "Donation et testament", official_text: "On ne pourra disposer de ses biens, à titre gratuit, que par donation entre vifs ou par testament, dans les formes ci-après établies.", conditions: "Acte de libéralité entre vifs ou à cause de mort" },
+      { article_number: "Art. 1108", title: "Conditions de validité des contrats", official_text: "Quatre conditions sont essentielles pour la validité d'une convention : le consentement de la partie qui s'oblige ; sa capacité de contracter ; un objet certain qui forme la matière de l'engagement ; une cause licite dans l'obligation.", conditions: "Formation d'un contrat valide" },
+      { article_number: "Art. 1109", title: "Vices du consentement", official_text: "Il n'y a point de consentement valable si le consentement n'a été donné que par erreur, ou s'il a été extorqué par violence ou surpris par dol.", conditions: "Annulation d'un contrat pour vice du consentement", procedure_type: "Civile — nullité relative" },
+      { article_number: "Art. 1134", title: "Force obligatoire des contrats", official_text: "Les conventions légalement formées tiennent lieu de loi à ceux qui les ont faites. Elles ne peuvent être révoquées que de leur consentement mutuel, ou pour les causes que la loi autorise.", conditions: "Exécution d'un contrat" },
+      { article_number: "Art. 1147", title: "Responsabilité contractuelle", official_text: "Le débiteur est condamné au paiement de dommages et intérêts, soit en raison de l'inexécution de l'obligation, soit en raison du retard dans l'exécution.", conditions: "Inexécution ou retard dans l'exécution d'un contrat", procedure_type: "Civile", prescription_period: "5 ans" },
+      { article_number: "Art. 1382", title: "Responsabilité délictuelle", official_text: "Tout fait quelconque de l'homme qui cause à autrui un dommage oblige celui par la faute duquel il est arrivé à le réparer.", conditions: "Dommage causé à autrui par faute", procedure_type: "Civile", prescription_period: "5 ans" },
+      { article_number: "Art. 1383", title: "Responsabilité par négligence", official_text: "Chacun est responsable du dommage qu'il a causé non seulement par son fait, mais encore par sa négligence ou par son imprudence.", conditions: "Dommage causé par imprudence ou négligence" },
+      { article_number: "Art. 1384", title: "Responsabilité du fait des choses", official_text: "On est responsable non seulement du dommage que l'on cause par son propre fait, mais encore de celui qui est causé par le fait des choses que l'on a sous sa garde.", conditions: "Dommage causé par une chose dont on a la garde" },
+      { article_number: "Art. 2262", title: "Prescription trentenaire", official_text: "Toutes les actions tant réelles que personnelles sont prescrites par trente ans.", conditions: "Action en justice non soumise à prescription spéciale", prescription_period: "30 ans" },
+      { article_number: "Art. 2270", title: "Prescription décennale — entrepreneurs", official_text: "Après dix ans, l'architecte et les entrepreneurs sont déchargés de la garantie des gros ouvrages qu'ils ont faits ou dirigés.", conditions: "Actions contre constructeurs après réception", prescription_period: "10 ans" },
+    ];
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions,
+          min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, procedure_type, prescription_years, searchable_text)
+         VALUES ($1,$2,$3,$4,'CIVIL',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [sourceId, art.article_number, art.title, art.official_text,
+         art.infraction ?? null, art.conditions,
+         art.min_sentence_years ?? null, art.max_sentence_years ?? null,
+         art.fine_min_fcfa ?? null, art.fine_max_fcfa ?? null,
+         art.procedure_type ?? null,
+         art.prescription_years ?? null,
+         `${art.title} ${art.official_text}`]
+      );
+    }
+    res.json({ success: true, message: `${articles.length} articles du Code Civil ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed Code Civil] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
+// ============================================================
+// SEED 2 — CODE DU TRAVAIL (Loi n°2015-532)
+// ============================================================
+
+app.post("/api/admin/seed-cpp", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Code de Procédure Pénale de Côte d''Ivoire'");
+    if (Number(existing[0].count) > 0) return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    const { rows: src } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI','République de Côte d''Ivoire','PROCEDURE_PENALE','CODE','Code de Procédure Pénale de Côte d''Ivoire','Loi n°60-366 du 14 novembre 1960 et modifications','ACTIVE') RETURNING id`
+    );
+    const sourceId = src[0].id;
+    const articles: any[] = [
+      { article_number: "Art. 1", title: "Action publique", official_text: "L'action publique pour l'application des peines est mise en mouvement et exercée par les magistrats ou les fonctionnaires auxquels elle est confiée par la loi.", conditions: "Déclenchement des poursuites pénales" },
+      { article_number: "Art. 2", title: "Action civile", official_text: "L'action civile en réparation du dommage causé par un crime, un délit ou une contravention appartient à tous ceux qui ont personnellement souffert du dommage directement causé par l'infraction.", conditions: "Dommage causé par une infraction pénale" },
+      { article_number: "Art. 40", title: "Officiers de police judiciaire", official_text: "Les officiers de police judiciaire comprennent les officiers et sous-officiers de gendarmerie, les commissaires et officiers de police, les maires et leurs adjoints.", conditions: "Qualité d'officier de police judiciaire" },
+      { article_number: "Art. 53", title: "Crime flagrant — définition", official_text: "Est flagrant le crime ou le délit qui se commet actuellement, ou qui vient de se commettre. Il y a aussi flagrant délit lorsque, dans un temps très voisin de l'action, la personne soupçonnée est trouvée en possession d'objets.", conditions: "Infraction commise ou venant d'être commise" },
+      { article_number: "Art. 63", title: "Garde à vue — durée", official_text: "La garde à vue ne peut excéder quarante-huit heures. À l'expiration de ce délai, la personne gardée à vue doit être présentée au procureur de la République ou remise en liberté.", conditions: "Placement en garde à vue", procedure_type: "Garde à vue" },
+      { article_number: "Art. 64", title: "Prolongation de garde à vue", official_text: "Sur autorisation écrite du Procureur de la République, la garde à vue peut être prolongée d'une nouvelle période de quarante-huit heures.", conditions: "Nécessités de l'enquête — autorisation du parquet" },
+      { article_number: "Art. 75", title: "Droits de la personne gardée à vue", official_text: "Toute personne placée en garde à vue peut demander à être examinée par un médecin. Elle doit être informée immédiatement de son placement, de sa durée et des faits qui lui sont reprochés.", conditions: "Placement en garde à vue" },
+      { article_number: "Art. 83", title: "Juge d'instruction", official_text: "Le juge d'instruction est chargé de procéder à tous les actes d'information qu'il juge utiles à la manifestation de la vérité. Il instruit à charge et à décharge.", conditions: "Ouverture d'une information judiciaire" },
+      { article_number: "Art. 94", title: "Inculpation — mise en examen", official_text: "Dès que le juge d'instruction a réuni des indices graves et concordants rendant vraisemblable que la personne a pu participer à la commission des faits, il peut l'inculper.", conditions: "Indices graves et concordants de participation à une infraction" },
+      { article_number: "Art. 118", title: "Détention provisoire", official_text: "La détention provisoire est une mesure exceptionnelle. Elle ne peut être ordonnée ou prolongée que si la détention est l'unique moyen de parvenir à l'un des objectifs définis.", conditions: "Nécessité de la détention avant jugement", procedure_type: "Judiciaire — chambre de l'instruction" },
+      { article_number: "Art. 134", title: "Durée maximale de détention provisoire", official_text: "En matière correctionnelle, la détention provisoire ne peut excéder six mois. En matière criminelle, elle ne peut excéder deux ans, sauf décision motivée.", conditions: "Détention avant jugement" },
+      { article_number: "Art. 152", title: "Liberté provisoire", official_text: "À tout moment de l'instruction, le juge peut ordonner la mise en liberté provisoire de l'inculpé sous caution ou contrôle judiciaire.", conditions: "Demande de libération avant jugement" },
+      { article_number: "Art. 181", title: "Renvoi en jugement", official_text: "Lorsque le juge d'instruction estime que les faits constituent un crime, il rend une ordonnance de renvoi devant la chambre criminelle.", conditions: "Fin d'instruction criminelle" },
+      { article_number: "Art. 216", title: "Présomption d'innocence", official_text: "Toute personne poursuivie est présumée innocente jusqu'à ce que sa culpabilité ait été établie. Les doutes profitent à l'accusé.", conditions: "Tout au long de la procédure pénale" },
+      { article_number: "Art. 305", title: "Jugement contradictoire", official_text: "Tout jugement pénal doit être rendu contradictoirement ou par défaut. Le prévenu doit avoir eu la possibilité d'assurer sa défense.", conditions: "Tenue d'un procès pénal" },
+      { article_number: "Art. 374", title: "Appel des jugements pénaux", official_text: "Les jugements rendus en matière correctionnelle peuvent être attaqués par la voie de l'appel devant la Cour d'Appel dans un délai de dix jours à compter du prononcé.", conditions: "Désaccord avec un jugement correctionnel", procedure_type: "Appel correctionnel", prescription_period: "10 jours" },
+      { article_number: "Art. 396", title: "Pourvoi en cassation", official_text: "Les arrêts rendus par les Cours d'Appel en matière pénale peuvent faire l'objet d'un pourvoi en cassation devant la Cour Suprême dans un délai de cinq jours.", conditions: "Contestation d'un arrêt de la Cour d'Appel", procedure_type: "Cassation pénale", prescription_period: "5 jours" },
+      { article_number: "Art. 420", title: "Exécution des peines", official_text: "Les jugements et arrêts de condamnation devenus définitifs sont mis à exécution sur les réquisitions du ministère public.", conditions: "Condamnation pénale définitive" },
+    ];
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions,
+          min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, procedure_type, prescription_years, searchable_text)
+         VALUES ($1,$2,$3,$4,'PROCEDURE_PENALE',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [sourceId, art.article_number, art.title, art.official_text,
+         art.infraction ?? null, art.conditions,
+         art.min_sentence_years ?? null, art.max_sentence_years ?? null,
+         art.fine_min_fcfa ?? null, art.fine_max_fcfa ?? null,
+         art.procedure_type ?? null,
+         art.prescription_years ?? null,
+         `${art.title} ${art.official_text}`]
+      );
+    }
+    res.json({ success: true, message: `${articles.length} articles du Code de Procédure Pénale ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed CPP] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
+// ============================================================
+// SEED 4 — CONSTITUTION DE CÔTE D'IVOIRE (2016)
+// ============================================================
+
+app.post("/api/admin/seed-constitution", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Constitution de la République de Côte d''Ivoire (2016)'");
+    if (Number(existing[0].count) > 0) return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    const { rows: src } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI','République de Côte d''Ivoire','CONSTITUTIONNEL','CONSTITUTION','Constitution de la République de Côte d''Ivoire (2016)','Adoptée par référendum du 30 octobre 2016','ACTIVE') RETURNING id`
+    );
+    const sourceId = src[0].id;
+    const articles: any[] = [
+      { article_number: "Art. 1", title: "République de Côte d'Ivoire", official_text: "La Côte d'Ivoire est une République indépendante et souveraine. L'État ivoirien est démocratique, laïque et social.", conditions: "Forme de l'État" },
+      { article_number: "Art. 2", title: "Devise nationale", official_text: "La devise de la République est : Union - Discipline - Travail. Le principe de la République est : gouvernement du peuple par le peuple et pour le peuple.", conditions: "Principes fondateurs de la République" },
+      { article_number: "Art. 4", title: "Partis politiques", official_text: "Les partis et groupements politiques concourent à l'expression du suffrage. Ils se forment et exercent leurs activités librement.", conditions: "Création et activité des partis politiques" },
+      { article_number: "Art. 5", title: "Égalité devant la loi", official_text: "Tous les êtres humains naissent libres et égaux devant la loi. Sous réserve de la réciprocité, les étrangers bénéficient sur le territoire de la République des mêmes droits et libertés.", conditions: "Droits fondamentaux — égalité" },
+      { article_number: "Art. 6", title: "Inviolabilité de la personne humaine", official_text: "L'être humain est sacré et inviolable. Tout individu a droit à la vie, à la liberté, à la sécurité et à l'intégrité de sa personne.", conditions: "Droits fondamentaux — vie et liberté" },
+      { article_number: "Art. 8", title: "Liberté d'expression et de presse", official_text: "La liberté de pensée, de conscience, d'expression, de presse, de communication audiovisuelle et de publication est garantie à tous.", conditions: "Exercice des libertés d'expression" },
+      { article_number: "Art. 9", title: "Droit à la vie privée", official_text: "Le droit à la vie privée, le secret de la correspondance et des communications sont garantis à tous.", conditions: "Protection de la vie privée" },
+      { article_number: "Art. 11", title: "Liberté de circulation", official_text: "Tout citoyen a le droit de se déplacer librement sur l'ensemble du territoire national et d'y établir son domicile.", conditions: "Liberté de mouvement sur le territoire" },
+      { article_number: "Art. 12", title: "Droit d'asile", official_text: "Tout individu persécuté en raison de son action en faveur de la liberté a le droit d'asile sur le territoire de la République.", conditions: "Demande d'asile politique" },
+      { article_number: "Art. 13", title: "Propriété privée garantie", official_text: "Le droit de propriété est garanti à tous. Nul ne peut être privé de sa propriété que pour cause d'utilité publique légalement constatée et moyennant une juste et préalable indemnisation.", conditions: "Droit de propriété et expropriation" },
+      { article_number: "Art. 15", title: "Droit au travail", official_text: "Le droit au travail est reconnu à chaque citoyen. L'État crée les conditions favorables à la jouissance de ce droit.", conditions: "Droit fondamental au travail" },
+      { article_number: "Art. 16", title: "Droit à l'éducation", official_text: "L'État assure à tous les citoyens les conditions égales d'accès à la santé, à l'éducation, à la culture, à l'information et à la formation professionnelle.", conditions: "Droits sociaux fondamentaux" },
+      { article_number: "Art. 22", title: "Interdiction de la torture", official_text: "Nul ne peut être soumis à la torture, à des sévices ou traitements cruels, inhumains ou dégradants.", conditions: "Traitement des personnes détenues ou arrêtées" },
+      { article_number: "Art. 23", title: "Légalité des infractions et des peines", official_text: "Nul ne peut être condamné que pour des faits prévus et punis par la loi. La loi pénale n'a pas d'effet rétroactif.", conditions: "Principe de légalité criminelle" },
+      { article_number: "Art. 24", title: "Présomption d'innocence (Constitution)", official_text: "Toute personne accusée d'un acte délictueux est présumée innocente jusqu'à ce que sa culpabilité ait été légalement établie.", conditions: "Procédure pénale — droit fondamental" },
+      { article_number: "Art. 25", title: "Droit à la défense", official_text: "Toute personne a droit à ce que sa cause soit entendue. Elle peut se faire assister d'un défenseur de son choix.", conditions: "Droit à un procès équitable" },
+      { article_number: "Art. 71", title: "Pouvoir exécutif — Président", official_text: "Le Président de la République est élu au suffrage universel direct pour un mandat de cinq ans renouvelable une seule fois.", conditions: "Élection présidentielle" },
+      { article_number: "Art. 95", title: "Pouvoir législatif — Parlement", official_text: "Le Parlement est composé de l'Assemblée nationale et du Sénat. Il vote la loi, consent l'impôt et contrôle l'action du Gouvernement.", conditions: "Organisation du pouvoir législatif" },
+      { article_number: "Art. 126", title: "Pouvoir judiciaire — indépendance", official_text: "Le pouvoir judiciaire est indépendant des pouvoirs exécutif et législatif. Les magistrats ne sont soumis dans l'exercice de leurs fonctions qu'à l'autorité de la loi.", conditions: "Principe d'indépendance de la justice" },
+      { article_number: "Art. 127", title: "Conseil Constitutionnel", official_text: "Le Conseil Constitutionnel est l'institution régulatrice du fonctionnement des institutions et de l'activité des pouvoirs publics.", conditions: "Contrôle de constitutionnalité des lois" },
+    ];
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions,
+          min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, procedure_type, prescription_years, searchable_text)
+         VALUES ($1,$2,$3,$4,'CONSTITUTIONNEL',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [sourceId, art.article_number, art.title, art.official_text,
+         art.infraction ?? null, art.conditions,
+         art.min_sentence_years ?? null, art.max_sentence_years ?? null,
+         art.fine_min_fcfa ?? null, art.fine_max_fcfa ?? null,
+         art.procedure_type ?? null,
+         art.prescription_years ?? null,
+         `${art.title} ${art.official_text}`]
+      );
+    }
+    res.json({ success: true, message: `${articles.length} articles de la Constitution ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed Constitution] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
+// ============================================================
+// SEED 5 — CODE DES INVESTISSEMENTS (Ordonnance n°2012-487)
+// ============================================================
+
+app.post("/api/admin/seed-code-investissements", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  try {
+    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Code des Investissements de Côte d''Ivoire'");
+    if (Number(existing[0].count) > 0) return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    const { rows: src } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI','République de Côte d''Ivoire','INVESTISSEMENTS','CODE','Code des Investissements de Côte d''Ivoire','Ordonnance n°2012-487 du 7 juin 2012','ACTIVE') RETURNING id`
+    );
+    const sourceId = src[0].id;
+    const articles: any[] = [
+      { article_number: "Art. 1", title: "Champ d'application", official_text: "Le présent code s'applique aux investissements réalisés en Côte d'Ivoire par des personnes physiques ou morales, ivoiriennes ou étrangères, dans les secteurs productifs.", conditions: "Investissements dans les secteurs productifs en CI" },
+      { article_number: "Art. 3", title: "Garanties générales aux investisseurs", official_text: "L'État garantit aux investisseurs la liberté d'entreprise, l'égalité de traitement, la protection de la propriété, la liberté de transfert des capitaux et revenus.", conditions: "Tout investisseur en Côte d'Ivoire" },
+      { article_number: "Art. 5", title: "Régime A — Petites entreprises", official_text: "Le régime A s'applique aux entreprises dont le programme d'investissement est inférieur à 200 millions FCFA. Il ouvre droit à des exonérations fiscales durant la phase d'installation.", conditions: "Investissement inférieur à 200 millions FCFA" },
+      { article_number: "Art. 6", title: "Régime B — Grandes entreprises", official_text: "Le régime B s'applique aux programmes d'investissement compris entre 200 millions et 15 milliards FCFA. Il accorde des avantages fiscaux pendant la phase d'installation et d'exploitation.", conditions: "Investissement entre 200 millions et 15 milliards FCFA" },
+      { article_number: "Art. 7", title: "Régime C — Grands projets", official_text: "Le régime C est applicable aux investissements supérieurs à 15 milliards FCFA ou à des projets stratégiques. Il fait l'objet d'une convention d'établissement.", conditions: "Investissement supérieur à 15 milliards FCFA" },
+      { article_number: "Art. 12", title: "Exonérations fiscales — phase d'installation", official_text: "Pendant la phase d'installation, les entreprises agréées bénéficient d'exonérations de droits et taxes à l'importation sur les équipements, matériels et matières premières.", conditions: "Phase d'installation d'une entreprise agréée" },
+      { article_number: "Art. 15", title: "Exonérations fiscales — phase d'exploitation", official_text: "Pendant la phase d'exploitation, les entreprises bénéficient d'exonérations de l'impôt sur les bénéfices industriels et commerciaux (BIC) pour une durée déterminée selon le régime.", conditions: "Phase d'exploitation d'une entreprise agréée" },
+      { article_number: "Art. 18", title: "Zones économiques spéciales (ZES)", official_text: "Les entreprises implantées dans les zones économiques spéciales bénéficient d'avantages fiscaux et douaniers renforcés ainsi que d'infrastructures dédiées.", conditions: "Implantation dans une zone économique spéciale" },
+      { article_number: "Art. 22", title: "Transfert de capitaux et revenus", official_text: "Les investisseurs étrangers sont garantis du libre transfert de leurs capitaux, des bénéfices et revenus provenant de leurs investissements, dans la limite des disponibilités en devises.", conditions: "Rapatriement de capitaux et dividendes par investisseurs étrangers" },
+      { article_number: "Art. 25", title: "Centre de Promotion des Investissements (CEPICI)", official_text: "Le CEPICI est le guichet unique chargé de faciliter les formalités administratives liées à la création d'entreprises et à l'agrément des investissements.", conditions: "Création d'entreprise ou demande d'agrément d'investissement" },
+      { article_number: "Art. 28", title: "Agrément des investissements", official_text: "L'agrément est accordé par arrêté du Ministre chargé des investissements sur avis du CEPICI. Il précise le régime applicable, les avantages accordés et les engagements de l'entreprise.", conditions: "Demande d'agrément au code des investissements" },
+      { article_number: "Art. 32", title: "Obligations de l'entreprise agréée", official_text: "L'entreprise agréée s'engage à réaliser le programme d'investissement approuvé, à atteindre les objectifs de création d'emplois fixés et à respecter la réglementation en vigueur.", conditions: "Maintien des avantages accordés" },
+      { article_number: "Art. 35", title: "Retrait d'agrément", official_text: "L'agrément peut être retiré en cas de non-respect des engagements souscrits, de fausse déclaration ou d'atteinte à l'ordre public. Le retrait entraîne le remboursement des avantages accordés.", conditions: "Non-respect des engagements de l'entreprise agréée" },
+      { article_number: "Art. 40", title: "Règlement des différends", official_text: "Les différends entre l'État et les investisseurs sont réglés à l'amiable. À défaut, ils sont soumis à l'arbitrage selon les règles de l'OHADA ou du CIRDI.", conditions: "Litige entre investisseur et État ivoirien", procedure_type: "Arbitrage OHADA/CIRDI" },
+    ];
+    for (const art of articles) {
+      await pool.query(
+        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions,
+          min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, procedure_type, prescription_years, searchable_text)
+         VALUES ($1,$2,$3,$4,'INVESTISSEMENTS',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [sourceId, art.article_number, art.title, art.official_text,
+         art.infraction ?? null, art.conditions,
+         art.min_sentence_years ?? null, art.max_sentence_years ?? null,
+         art.fine_min_fcfa ?? null, art.fine_max_fcfa ?? null,
+         art.procedure_type ?? null,
+         art.prescription_years ?? null,
+         `${art.title} ${art.official_text}`]
+      );
+    }
+    res.json({ success: true, message: `${articles.length} articles du Code des Investissements ajoutés.` });
+  } catch (err: any) {
+    console.error("[Seed Code Investissements] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
 });
 
 
