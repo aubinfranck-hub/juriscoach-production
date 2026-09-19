@@ -2315,4 +2315,170 @@ app.post("/api/admin/seed-code-investissements", requireAdminAuth, async (req, r
 });
 
 
+
+// ============================================================
+// SCRAPER LOIDICI.BIZ — Crawl et import automatique
+// ============================================================
+
+// Map des codes disponibles sur loidici.biz avec leurs URLs d'index
+const LOIDICI_CODES: Record<string, { title: string; reference: string; domain: string; indexUrl: string; chapters: string[] }> = {
+  "code-civil": {
+    title: "Code Civil de Côte d'Ivoire",
+    reference: "Loi n°2019-573 et textes modifiés",
+    domain: "CIVIL",
+    indexUrl: "https://loidici.biz/lois-article-par-article/codes/le-code-civil/",
+    chapters: [
+      "https://loidici.biz/2018/09/23/titre-preliminaire-de-la-publication-des-effets-et-de-lapplication-des-lois-en-general/",
+      "https://loidici.biz/2018/08/20/titre-premier-de-la-jouissance-et-de-la-privation-droits-civils-chapitre-premier-de-la-jouissance-des-droits-civils/",
+      "https://loidici.biz/2018/08/20/chapitre-2-de-la-privation-des-droits-civils/",
+      "https://loidici.biz/2018/08/19/titre-xi-de-la-majorite-de-linterdiction-et-du-conseil-judiciaire-chapitre-premier-de-la-majorite/",
+      "https://loidici.biz/2018/08/19/chapitre-2-de-linterdiction/",
+      "https://loidici.biz/2018/08/19/titre-premier-de-la-distinction-des-biens-chapitre-premier-des-immeubles/",
+      "https://loidici.biz/2018/08/19/chapitre-2-des-meubles/",
+      "https://loidici.biz/2018/08/19/titre-ii-de-la-propriete-chapitre-premier-du-droit-daccession-sur-ce-qui-est-produit-par-la-chose/",
+      "https://loidici.biz/2018/08/19/livre-iii-des-differentes-manieres-dont-on-acquiert-la-propriete/",
+      "https://loidici.biz/2018/08/19/chapitre-2-des-conditions-essentielles-pour-la-validite-des-conventions/",
+      "https://loidici.biz/2018/08/19/chapitre-3-de-leffet-des-obligations/",
+      "https://loidici.biz/2018/08/19/chapitre-2-des-delits-et-des-quasi-delits/",
+      "https://loidici.biz/2018/08/19/titre-xx-de-la-prescription-chapitre-premier-dispositions-generales/",
+      "https://loidici.biz/2018/08/19/chapitre-5-du-temps-requis-pour-prescrire/",
+    ]
+  },
+  "code-penal": {
+    title: "Code Pénal de Côte d'Ivoire",
+    reference: "Loi n°2019-574 du 26 juin 2019",
+    domain: "PENAL",
+    indexUrl: "https://loidici.biz/lois-article-par-article/codes/le-code-penal/",
+    chapters: []
+  },
+  "code-travail": {
+    title: "Code du Travail de Côte d'Ivoire",
+    reference: "Loi n°2015-532 du 20 juillet 2015",
+    domain: "TRAVAIL",
+    indexUrl: "https://loidici.biz/lois-article-par-article/codes/le-code-du-travail/",
+    chapters: []
+  },
+};
+
+// Fonction de scraping d'une page loidici.biz
+async function scrapeLoidiciPage(url: string): Promise<{ articleNumber: string; text: string }[]> {
+  const response = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (compatible; JurisCoach/1.0; +https://juriscoach.ci)" }
+  });
+  if (!response.ok) throw new Error(`HTTP ${response.status} pour ${url}`);
+  const html = await response.text();
+
+  const articles: { articleNumber: string; text: string }[] = [];
+
+  // Parser les articles — format loidici: "Article XXXX" suivi du texte
+  const articleRegex = /Article\s+(\d+(?:\s*\w+)?)[.\s\-]*([\s\S]*?)(?=Article\s+\d|$)/gi;
+  let match;
+  while ((match = articleRegex.exec(html)) !== null) {
+    const articleNumber = `Art. ${match[1].trim()}`;
+    // Nettoyer le HTML du texte
+    const rawText = match[2]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&eacute;/g, 'é')
+      .replace(/&egrave;/g, 'è')
+      .replace(/&agrave;/g, 'à')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (rawText.length > 20) {
+      articles.push({ articleNumber, text: rawText.slice(0, 2000) });
+    }
+  }
+  return articles;
+}
+
+// Endpoint: scrape un code depuis loidici.biz et l'insère en DB
+app.post("/api/admin/scrape-loidici", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
+  const { code } = req.body as { code?: string };
+  if (!code || !LOIDICI_CODES[code]) {
+    return res.status(400).json({
+      success: false,
+      message: "Code inconnu. Codes disponibles : " + Object.keys(LOIDICI_CODES).join(", ")
+    });
+  }
+  const codeDef = LOIDICI_CODES[code];
+
+  try {
+    // Vérifier si déjà présent
+    const { rows: existing } = await pool.query(
+      "SELECT COUNT(*) FROM legal_sources WHERE title = $1", [codeDef.title]
+    );
+    if (Number(existing[0].count) > 0) {
+      return res.json({ success: true, message: "Déjà présent.", skipped: true });
+    }
+
+    // Créer la source légale
+    const { rows: src } = await pool.query(
+      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
+       VALUES ('CI','République de Côte d''Ivoire',$1,'CODE',$2,$3,'ACTIVE') RETURNING id`,
+      [codeDef.domain, codeDef.title, codeDef.reference]
+    );
+    const sourceId = src[0].id;
+
+    let totalInserted = 0;
+    const errors: string[] = [];
+
+    // Scraper chaque chapitre
+    for (const chapterUrl of codeDef.chapters) {
+      try {
+        console.log(`[Scrape] Crawling: ${chapterUrl}`);
+        const articles = await scrapeLoidiciPage(chapterUrl);
+
+        for (const art of articles) {
+          // Extraire titre du début du texte (premiers 80 chars)
+          const titleMatch = art.text.match(/^([^.!?]{10,80})[.!?]/);
+          const title = titleMatch ? titleMatch[1].trim() : art.text.slice(0, 60);
+          const officialText = art.text;
+
+          await pool.query(
+            `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, conditions, searchable_text)
+             VALUES ($1,$2,$3,$4,$5,$6,$7)
+             ON CONFLICT DO NOTHING`,
+            [sourceId, art.articleNumber, title, officialText, codeDef.domain,
+             "Voir texte de l'article", `${art.articleNumber} ${title} ${officialText}`]
+          );
+          totalInserted++;
+        }
+
+        // Pause entre pages pour ne pas surcharger le site
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (chapterErr: any) {
+        errors.push(`${chapterUrl}: ${chapterErr.message}`);
+        console.error(`[Scrape] Erreur sur ${chapterUrl}:`, chapterErr.message);
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `${totalInserted} articles du "${codeDef.title}" importés depuis loidici.biz.`,
+      code,
+      totalInserted,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (err: any) {
+    console.error("[Scrape Loidici] Échec:", err.message);
+    res.status(500).json({ success: false, message: "Échec : " + err.message });
+  }
+});
+
+// Endpoint: liste les codes disponibles pour le scraping
+app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) => {
+  const codes = Object.entries(LOIDICI_CODES).map(([key, val]) => ({
+    key,
+    title: val.title,
+    domain: val.domain,
+    chaptersCount: val.chapters.length
+  }));
+  res.json({ success: true, codes });
+});
+
+
 startServer();
