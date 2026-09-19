@@ -2071,14 +2071,14 @@ app.post("/api/admin/seed-code-construction", requireAdminAuth, async (req, res)
     for (const art of articles) {
       await pool.query(
         `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions,
-          min_sentence_years, max_sentence_years, fine_amount_fcfa, procedure_type, prescription_period, searchable_text)
-         VALUES ($1,$2,$3,$4,'CONSTRUCTION',$5,$6,$7,$8,$9,$10,$11,$12)`,
+          min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa, procedure_type, prescription_years, searchable_text)
+         VALUES ($1,$2,$3,$4,'CONSTRUCTION',$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           sourceId, art.article_number, art.title, art.official_text,
           art.infraction ?? null, art.conditions,
           art.min_sentence_years ?? null, art.max_sentence_years ?? null,
-          art.fine_amount_fcfa ?? null, art.procedure_type ?? null,
-          art.prescription_period ?? null,
+          art.fine_amount_fcfa ?? null, art.fine_amount_fcfa ?? null,
+          art.procedure_type ?? null, art.prescription_years ?? null,
           `${art.title} ${art.official_text}`
         ]
       );
@@ -2090,67 +2090,5 @@ app.post("/api/admin/seed-code-construction", requireAdminAuth, async (req, res)
   }
 });
 
-app.post("/api/admin/seed-code-construction", requireAdminAuth, async (req, res) => {
-  if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
-  try {
-    const { rows: existing } = await pool.query("SELECT COUNT(*) FROM legal_sources WHERE title = 'Code de la Construction et de l''Habitat'");
-    if (Number(existing[0].count) > 0) {
-      return res.json({ success: true, message: "Déjà présent.", skipped: true });
-    }
-    const { rows: sourceRows } = await pool.query(
-      `INSERT INTO legal_sources (country, organization, domain, source_type, title, reference, status)
-       VALUES ('CI', 'République de Côte d''Ivoire', 'CONSTRUCTION', 'CODE', 'Code de la Construction et de l''Habitat', 'Loi n°2019-576 du 26 juin 2019 - Journal Officiel 1er août 2019', 'ACTIVE') RETURNING id`
-    );
-    const sourceId = sourceRows[0].id;
-    const articles: any[] = [
-      { article_number: "Art. 1", title: "Objet de la loi", official_text: "La présente loi fixe les règles relatives à la construction, à l'urbanisme, à l'habitat et aux activités immobilières en République de Côte d'Ivoire.", conditions: "Application générale sur le territoire national" },
-      { article_number: "Art. 5", title: "Permis de construire obligatoire", official_text: "Toute construction, reconstruction, transformation ou agrandissement d'immeuble est soumis à l'obtention préalable d'un permis de construire.", conditions: "Travaux de construction ou transformation", infraction: "Construction sans permis de construire", procedure_type: "Administrative/Pénale", prescription_period: "10 ans" },
-      { article_number: "Art. 22", title: "Maîtrise d'ouvrage", official_text: "Le maître d'ouvrage est la personne physique ou morale pour le compte de laquelle les travaux sont exécutés. Il est responsable de la conformité au permis accordé.", conditions: "Relation contractuelle maître d'ouvrage/entrepreneur" },
-      { article_number: "Art. 25", title: "Maîtrise d'œuvre", official_text: "Toute construction dont la surface de plancher excède 150 m² doit être conçue par un architecte agréé.", conditions: "Construction de plus de 150 m²" },
-      { article_number: "Art. 28", title: "Responsabilité décennale", official_text: "Les constructeurs sont responsables pendant dix ans des dommages qui compromettent la solidité de l'ouvrage ou le rendent impropre à sa destination.", conditions: "Désordres affectant la solidité", procedure_type: "Civile", prescription_period: "10 ans" },
-      { article_number: "Art. 35", title: "Garantie de parfait achèvement", official_text: "L'entrepreneur est tenu, pendant un délai d'un an à compter de la réception, de remédier à tous les désordres signalés.", conditions: "Désordres dans l'année suivant la réception", procedure_type: "Civile", prescription_period: "1 an" },
-      { article_number: "Art. 38", title: "Garantie biennale", official_text: "Les éléments d'équipement dissociables sont couverts par une garantie de bon fonctionnement de deux ans.", conditions: "Équipements dissociables défaillants", procedure_type: "Civile", prescription_period: "2 ans" },
-      { article_number: "Art. 65", title: "Promotion immobilière — agrément", official_text: "Toute personne se livrant à la promotion immobilière doit obtenir un agrément du ministère chargé du logement.", conditions: "Exercice de la promotion immobilière professionnelle" },
-      { article_number: "Art. 68", title: "Vente en état futur d'achèvement (VEFA)", official_text: "La VEFA est le contrat par lequel le vendeur s'oblige à édifier un immeuble dans un délai déterminé. Elle est constatée par acte authentique.", conditions: "Contrat de vente sur plan", procedure_type: "Civile/Notariale" },
-      { article_number: "Art. 75", title: "Garantie financière d'achèvement", official_text: "Tout promoteur doit justifier d'une garantie financière d'achèvement avant toute commercialisation d'un programme immobilier.", conditions: "Commercialisation d'un programme neuf" },
-      { article_number: "Art. 115", title: "Copropriété — définition", official_text: "La copropriété est le régime applicable à tout immeuble dont la propriété est répartie entre plusieurs personnes par lots comprenant une partie privative et une quote-part de parties communes.", conditions: "Immeuble à propriété divisée" },
-      { article_number: "Art. 122", title: "Syndicat des copropriétaires", official_text: "Les copropriétaires sont constitués de plein droit en un syndicat qui a la personnalité civile, représenté par un syndic élu en assemblée générale.", conditions: "Immeuble en copropriété" },
-      { article_number: "Art. 135", title: "Charges de copropriété", official_text: "Chaque copropriétaire contribue aux charges relatives à la conservation, l'entretien et l'administration des parties communes proportionnellement à ses tantièmes.", conditions: "Répartition des charges communes" },
-      { article_number: "Art. 142", title: "Bail d'habitation — définition", official_text: "Le bail d'habitation est le contrat par lequel le bailleur met à disposition du locataire un logement décent en contrepartie d'un loyer.", conditions: "Location à usage d'habitation principale" },
-      { article_number: "Art. 145", title: "Durée minimale du bail", official_text: "La durée minimale du bail d'habitation est fixée à deux ans renouvelables. Le bail doit être établi par écrit.", conditions: "Bail entre particuliers" },
-      { article_number: "Art. 148", title: "Dépôt de garantie locatif", official_text: "Le dépôt de garantie ne peut excéder deux mois de loyer hors charges. Il doit être restitué dans un délai de deux mois après remise des clés.", conditions: "Remise des clés en fin de bail" },
-      { article_number: "Art. 162", title: "Expulsion locative", official_text: "L'expulsion ne peut intervenir qu'en vertu d'une décision de justice exécutoire. Aucune expulsion sans l'assistance d'un officier de police judiciaire.", conditions: "Décision de justice définitive requise", procedure_type: "Judiciaire" },
-      { article_number: "Art. 175", title: "Agences immobilières — agrément", official_text: "L'exercice de la profession d'agent immobilier est subordonné à l'obtention d'un agrément et d'un cautionnement financier.", conditions: "Exercice professionnel de l'activité d'agent immobilier" },
-      { article_number: "Art. 195", title: "Diagnostic technique immobilier", official_text: "Avant toute vente d'immeuble bâti, le vendeur doit fournir un dossier de diagnostic technique comprenant l'état parasitaire et des installations.", conditions: "Vente d'immeuble bâti" },
-      { article_number: "Art. 519", title: "Construction sans permis — sanctions", official_text: "Est punie d'un emprisonnement de six mois à deux ans et d'une amende de 1 000 000 à 5 000 000 FCFA toute personne construisant sans permis.", conditions: "Travaux non autorisés", infraction: "Construction sans permis de construire", min_sentence_years: 0.5, max_sentence_years: 2, fine_amount_fcfa: 5000000, procedure_type: "Pénale", prescription_period: "3 ans" },
-      { article_number: "Art. 522", title: "Non-respect du permis — sanctions", official_text: "Est punie d'un emprisonnement d'un mois à un an et d'une amende de 500 000 à 2 000 000 FCFA toute construction non conforme aux plans approuvés.", conditions: "Travaux non conformes au permis", infraction: "Non-conformité au permis de construire", min_sentence_years: 0.08, max_sentence_years: 1, fine_amount_fcfa: 2000000, procedure_type: "Pénale", prescription_period: "3 ans" },
-      { article_number: "Art. 525", title: "Exercice sans agrément BTP", official_text: "Est punie d'une amende de 2 000 000 à 10 000 000 FCFA toute entreprise de BTP exerçant sans agrément.", conditions: "Exercice illégal activité BTP", infraction: "Exercice sans agrément BTP", fine_amount_fcfa: 10000000, procedure_type: "Pénale/Administrative", prescription_period: "3 ans" },
-      { article_number: "Art. 528", title: "Promotion immobilière sans agrément", official_text: "Est punie d'un emprisonnement d'un an à trois ans et d'une amende de 5 000 000 à 20 000 000 FCFA toute promotion immobilière sans agrément.", conditions: "Promotion sans agrément", infraction: "Promotion immobilière sans agrément", min_sentence_years: 1, max_sentence_years: 3, fine_amount_fcfa: 20000000, procedure_type: "Pénale", prescription_period: "5 ans" },
-      { article_number: "Art. 531", title: "VEFA sans garantie financière", official_text: "Est punie d'un emprisonnement de deux ans à cinq ans et d'une amende de 10 000 000 à 50 000 000 FCFA toute commercialisation sans garantie d'achèvement.", conditions: "Commercialisation sans garantie", infraction: "VEFA sans garantie financière", min_sentence_years: 2, max_sentence_years: 5, fine_amount_fcfa: 50000000, procedure_type: "Pénale", prescription_period: "5 ans" },
-      { article_number: "Art. 537", title: "Détournement de fonds immobiliers", official_text: "Est punie d'un emprisonnement de trois ans à dix ans et d'une amende de 20 000 000 à 100 000 000 FCFA toute personne détournant des fonds de clients immobiliers.", conditions: "Détournement de fonds clients", infraction: "Détournement de fonds immobiliers", min_sentence_years: 3, max_sentence_years: 10, fine_amount_fcfa: 100000000, procedure_type: "Pénale", prescription_period: "10 ans" },
-      { article_number: "Art. 540", title: "Expulsion voie de fait", official_text: "Est punie d'un emprisonnement de six mois à deux ans et d'une amende de 1 000 000 à 5 000 000 FCFA tout bailleur expulsant sans décision de justice.", conditions: "Expulsion sans décision judiciaire", infraction: "Expulsion illégale — voie de fait", min_sentence_years: 0.5, max_sentence_years: 2, fine_amount_fcfa: 5000000, procedure_type: "Pénale", prescription_period: "3 ans" },
-      { article_number: "Art. 543", title: "Diagnostics falsifiés", official_text: "Est punie d'un emprisonnement d'un an à trois ans et d'une amende de 3 000 000 à 15 000 000 FCFA toute personne établissant un diagnostic technique falsifié.", conditions: "Faux rapport de diagnostic", infraction: "Faux diagnostic technique immobilier", min_sentence_years: 1, max_sentence_years: 3, fine_amount_fcfa: 15000000, procedure_type: "Pénale", prescription_period: "5 ans" },
-      { article_number: "Art. 546", title: "Récidive — aggravation", official_text: "En cas de récidive, les peines sont portées au double. Le tribunal peut prononcer l'interdiction définitive d'exercer.", conditions: "Récidive légale", infraction: "Récidive Code Construction", procedure_type: "Pénale", prescription_period: "5 ans" },
-      { article_number: "Art. 553", title: "Entrée en vigueur", official_text: "La présente loi entre en vigueur à la date de sa publication au Journal Officiel. Elle abroge toutes dispositions antérieures contraires.", conditions: "Publication au JO du 1er août 2019" },
-    ];
-    for (const art of articles) {
-      await pool.query(
-        `INSERT INTO legal_articles (source_id, article_number, title, official_text, domain, infraction, conditions,
-          min_sentence_years, max_sentence_years, fine_amount_fcfa, procedure_type, prescription_period, searchable_text)
-         VALUES ($1,$2,$3,$4,'CONSTRUCTION',$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [sourceId, art.article_number, art.title, art.official_text,
-         art.infraction ?? null, art.conditions,
-         art.min_sentence_years ?? null, art.max_sentence_years ?? null,
-         art.fine_amount_fcfa ?? null, art.procedure_type ?? null,
-         art.prescription_period ?? null,
-         `${art.title} ${art.official_text}`]
-      );
-    }
-    res.json({ success: true, message: `${articles.length} article(s) du Code de la Construction et de l'Habitat ajoutés.` });
-  } catch (err: any) {
-    console.error("[Seed Code Construction] Échec:", err.message);
-    res.status(500).json({ success: false, message: "Échec : " + err.message });
-  }
-});
 
 startServer();
