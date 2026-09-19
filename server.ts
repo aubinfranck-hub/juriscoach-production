@@ -2147,8 +2147,8 @@ app.post("/api/admin/seed-code-construction", requireAdminAuth, async (req, res)
           sourceId, art.article_number, art.title, art.official_text,
           art.infraction ?? null, art.conditions,
           art.min_sentence_years ?? null, art.max_sentence_years ?? null,
-          art.fine_amount_fcfa ?? null, art.fine_amount_fcfa ?? null,
-          art.procedure_type ?? null, art.prescription_years ?? null,
+          (art as any).fine_amount_fcfa ?? null, (art as any).fine_amount_fcfa ?? null,
+          (art as any).procedure_type ?? null, (art as any).prescription_years ?? null,
           `${art.title} ${art.official_text}`
         ]
       );
