@@ -2158,6 +2158,7 @@ app.post("/api/admin/seed-code-construction", requireAdminAuth, async (req, res)
     console.error("[Seed Code Construction] Échec:", err.message);
     res.status(500).json({ success: false, message: "Échec : " + err.message });
   }
+});
 app.post("/api/admin/seed-code-civil", requireAdminAuth, async (req, res) => {
   if (!pool) return res.status(503).json({ success: false, message: "Service indisponible." });
   try {
