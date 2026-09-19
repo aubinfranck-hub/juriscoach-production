@@ -293,6 +293,15 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_diagnostic_user ON diagnostic_results(user_id);
 
+    CREATE TABLE IF NOT EXISTS live_sessions_memory (
+      id SERIAL PRIMARY KEY,
+      phone TEXT NOT NULL,
+      session_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      summary TEXT NOT NULL,
+      key_topics TEXT[],
+      last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
     CREATE TABLE IF NOT EXISTS generated_documents (
       id SERIAL PRIMARY KEY,
       dossier_id INTEGER NOT NULL REFERENCES dossiers(id) ON DELETE CASCADE,
@@ -1859,6 +1868,48 @@ async function startServer() {
   });
 
   // --- Bridge vocal Gemini Live (fonctionnalité Live, réservée aux comptes Pro) ---
+
+  // === MÉMOIRE SESSIONS LIVE PAR UTILISATEUR ===
+  // RAM: historique de la session en cours (transcriptions)
+  const liveSessionTranscripts = new Map<string, { role: "user" | "assistant"; text: string; ts: number }[]>();
+
+  // Charger le résumé des sessions passées depuis DB
+  async function loadUserMemory(phone: string): Promise<string> {
+    if (!pool) return "";
+    try {
+      const { rows } = await pool.query(
+        `SELECT summary, key_topics, session_date FROM live_sessions_memory
+         WHERE phone = $1 ORDER BY last_updated DESC LIMIT 5`,
+        [phone]
+      );
+      if (rows.length === 0) return "";
+      const memories = rows.map((r: any) => {
+        const topics = r.key_topics?.length ? ` (sujets: ${r.key_topics.join(", ")})` : "";
+        return `- ${r.session_date}: ${r.summary}${topics}`;
+      }).join("\n");
+      return `\n\nMÉMOIRE DES SESSIONS PRÉCÉDENTES DE CET UTILISATEUR:\n${memories}`;
+    } catch (e) { return ""; }
+  }
+
+  // Sauvegarder un résumé de la session en fin de connexion
+  async function saveSessionMemory(phone: string, transcript: { role: string; text: string }[]): Promise<void> {
+    if (!pool || transcript.length < 2) return;
+    try {
+      // Construire un résumé simple des échanges
+      const lines = transcript.slice(-20).map(t => `${t.role === "user" ? "Utilisateur" : "JurisCoach"}: ${t.text}`).join("\n");
+      const summary = lines.length > 1000 ? lines.substring(0, 1000) + "..." : lines;
+      // Extraire les sujets depuis les messages utilisateur
+      const userTexts = transcript.filter(t => t.role === "user").map(t => t.text).join(" ");
+      const topicKeywords = ["divorce", "licenciement", "contrat", "loyer", "succession", "propriété", "garde", "violence", "vol", "fraude", "dette", "permis", "travail", "bail", "mariage", "héritage", "procès", "plainte", "police"];
+      const foundTopics = topicKeywords.filter(k => userTexts.toLowerCase().includes(k));
+      await pool.query(
+        `INSERT INTO live_sessions_memory (phone, summary, key_topics, session_date)
+         VALUES ($1, $2, $3, CURRENT_DATE)
+         ON CONFLICT DO NOTHING`,
+        [phone, summary, foundTopics]
+      );
+    } catch (e: any) { console.error("[LiveMemory] Erreur sauvegarde:", e.message); }
+  }
   const wss = new WebSocketServer({ noServer: true });
 
   server.on("upgrade", (request, socket, head) => {
@@ -1878,6 +1929,8 @@ async function startServer() {
         return;
       }
       wss.handleUpgrade(request, socket, head, (ws) => {
+        // Attacher phone à la connexion pour la mémoire
+        (ws as any).__phone = session.phone;
         wss.emit("connection", ws, request);
       });
     }
@@ -1887,12 +1940,17 @@ async function startServer() {
     console.log("[WebSocket] Client connecté au bridge vocal Live.");
     let geminiSession: any = null;
     let isClosed = false;
+    const userPhone: string = (clientWs as any).__phone || "";
+    const sessionTranscript: { role: "user" | "assistant"; text: string; ts: number }[] = [];
+    if (userPhone) liveSessionTranscripts.set(userPhone, sessionTranscript);
 
     clientWs.on("message", async (data) => {
       try {
         const message = JSON.parse(data.toString());
 
         if (message.type === "start") {
+          // Charger la mémoire des sessions précédentes
+          const userMemoryContext = userPhone ? await loadUserMemory(userPhone) : "";
           const systemInstruction = `Tu es JurisCoach, un assistant juridique vocal spécialisé en droit ivoirien (Code pénal, droit OHADA, Code du travail, Code foncier). Tu accompagnes une personne qui te pose des questions juridiques à voix haute, comme le ferait un avocat au téléphone.
 
 RÈGLE D'IDENTITÉ :
@@ -1907,7 +1965,7 @@ TON ET STYLE :
 RAPPEL IMPORTANT (à dire une fois en début d'échange) :
 - Précise que ce diagnostic vocal est une aide informative et ne remplace pas la consultation d'un avocat pour un dossier réel.
 
-FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisques, pas de hashtags, pas de puces). Phrases fluides et naturelles uniquement.`;
+FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisques, pas de hashtags, pas de puces). Phrases fluides et naturelles uniquement.\${userMemoryContext}`;
 
           try {
             geminiSession = await getAIClient().live.connect({
@@ -1935,13 +1993,19 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
                   if (modelParts && Array.isArray(modelParts)) {
                     for (const part of modelParts) {
                       if (part.inlineData?.data) clientWs.send(JSON.stringify({ type: "audio", audio: part.inlineData.data }));
-                      if (part.text) clientWs.send(JSON.stringify({ type: "text", text: part.text }));
+                      if (part.text) {
+                        clientWs.send(JSON.stringify({ type: "text", text: part.text }));
+                        sessionTranscript.push({ role: "assistant", text: part.text, ts: Date.now() });
+                      }
                     }
                   }
                   const userParts = msg.serverContent?.userTurn?.parts;
                   if (userParts && Array.isArray(userParts)) {
                     for (const part of userParts) {
-                      if (part.text) clientWs.send(JSON.stringify({ type: "userTranscript", text: part.text }));
+                      if (part.text) {
+                      clientWs.send(JSON.stringify({ type: "userTranscript", text: part.text }));
+                      sessionTranscript.push({ role: "user", text: part.text, ts: Date.now() });
+                    }
                     }
                   }
                   if (msg.serverContent?.interrupted) clientWs.send(JSON.stringify({ type: "interrupted" }));
@@ -1981,10 +2045,16 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
       }
     });
 
-    clientWs.on("close", () => {
+    clientWs.on("close", async () => {
       console.log("[WebSocket] Client déconnecté du bridge vocal Live.");
       isClosed = true;
       if (geminiSession) { try { geminiSession.close(); } catch (e) {} }
+      // Sauvegarder le résumé de la session en DB
+      if (userPhone && sessionTranscript.length > 1) {
+        await saveSessionMemory(userPhone, sessionTranscript);
+        liveSessionTranscripts.delete(userPhone);
+        console.log(`[LiveMemory] Session sauvegardée pour ${userPhone} (${sessionTranscript.length} échanges)`);
+      }
     });
   });
 
