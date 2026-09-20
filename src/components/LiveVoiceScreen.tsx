@@ -13,6 +13,7 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
   const [sponsoredAd, setSponsoredAd] = useState<any | null>(null);
   const [, setChallengeDigit] = useState<number | null>(null);
   const [challengeMessage, setChallengeMessage] = useState("");
+  const [adReady, setAdReady] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
