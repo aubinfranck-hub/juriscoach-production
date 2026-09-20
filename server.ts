@@ -89,10 +89,15 @@ async function persistSession(token: string): Promise<void> {
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token || !sessions.has(token)) {
-    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  const session = token ? sessions.get(token) : null;
+  const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  if (!token || !session) return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  if (Date.now() - session.createdAt > SESSION_MAX_AGE_MS) {
+    sessions.delete(token);
+    pool?.query("DELETE FROM sessions WHERE token = $1", [token]).catch(() => {});
+    return res.status(401).json({ success: false, message: "Session expirée. Veuillez vous reconnecter." });
   }
-  req.session = sessions.get(token);
+  req.session = session;
   next();
 }
 
@@ -594,6 +599,7 @@ app.post("/api/diagnostic/penal", requireAuth, resolveUserId, async (req: any, r
     if (!description || description.trim().length < 10) {
       return res.status(400).json({ success: false, message: "La description doit contenir au moins 10 caractères." });
     }
+    if (dossier_id) { const owner = await pool!.query("SELECT id FROM dossiers WHERE id = $1 AND user_id = $2", [dossier_id, req.user.userId]); if (owner.rows.length === 0) return res.status(404).json({ success: false, message: "Dossier introuvable ou accès refusé." }); }
     const diagResult = await pool!.query(
       `INSERT INTO diagnostic_results (user_id, dossier_id, diagnostic_type, input_description, input_answers, confidence_level)
        VALUES ($1, $2, 'PENAL', $3, '{}', 'INITIAL') RETURNING id`,
