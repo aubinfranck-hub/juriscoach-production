@@ -91,8 +91,16 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
       if (inputCtx.state === "suspended") await inputCtx.resume();
       if (outputCtx.state === "suspended") await outputCtx.resume();
 
+      const ticketResponse = await fetch("/api/live-ticket", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const ticketData = await ticketResponse.json();
+      if (!ticketResponse.ok || !ticketData.ticket) {
+        throw new Error(ticketData.message || "Impossible d’obtenir le ticket Live.");
+      }
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/live-ws?token=${encodeURIComponent(token)}`);
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/live-ws?ticket=${encodeURIComponent(ticketData.ticket)}`);
       wsRef.current = ws;
 
       ws.onopen = () => ws.send(JSON.stringify({ type: "start" }));
