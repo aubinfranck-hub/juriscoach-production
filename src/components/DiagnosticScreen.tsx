@@ -1,37 +1,28 @@
 import React, { useState } from "react";
-import { Send, Scale, AlertTriangle, FileText, Loader2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, BriefcaseBusiness, FileText, Home, Loader2, Scale, Search, Send, ShieldAlert, Users } from "lucide-react";
 
-interface Question {
-  id: number;
-  question: string;
-  field_name: string;
-  type: string;
-  options: string[];
-}
-
-interface ArticleCite {
-  article_number: string;
-  source?: string;
-  title: string;
-  text: string;
-}
-
+interface Question { id: number; question: string; field_name: string; type: string; options: string[]; }
+interface ArticleCite { article_number: string; source?: string; title: string; text: string; }
 interface DiagnosisResult {
-  primary_qualification: string;
-  secondary_qualifications?: string[];
-  pertinence_score?: number;
-  confidence_level?: string;
-  constitutive_elements?: string[];
-  applicable_articles?: ArticleCite[];
+  primary_qualification: string; secondary_qualifications?: string[]; pertinence_score?: number; confidence_level?: string;
+  constitutive_elements?: string[]; applicable_articles?: ArticleCite[];
   sentences?: { min_years?: number; max_years?: number; min_fine?: number; max_fine?: number };
-  evidence_needed?: string[];
-  procedure?: string;
-  prescription_info?: string;
-  risk_level?: string;
-  missing_information?: string[];
+  evidence_needed?: string[]; procedure?: string; prescription_info?: string; risk_level?: string; missing_information?: string[];
 }
-
 type Stage = "description" | "questions" | "results";
+
+const privateDomains = [
+  { icon: Home, title: "Logement & Terrains", text: "Bail, loyer, caution, parcelles, ACD, litiges fonciers", tone: "emerald" },
+  { icon: BriefcaseBusiness, title: "Travail & Salaire", text: "Contrat, licenciement, CNPS, salaire, indemnités", tone: "orange" },
+  { icon: Users, title: "Famille & Héritage", text: "Mariage, filiation, pension, succession, partage", tone: "violet" },
+  { icon: ShieldAlert, title: "Urgence Police & Plainte", text: "Garde à vue, plainte, escroquerie, cybercriminalité", tone: "rose" },
+];
+const proDomains = [
+  { title: "Création & CEPICI", text: "Statuts, RCCM, formalités", icon: "🏢" },
+  { title: "Contrats & Salariés", text: "Contrats, RH, conformité", icon: "📄" },
+  { title: "Factures & Impayés", text: "Recouvrement, injonction de payer", icon: "💰" },
+  { title: "Baux commerciaux", text: "Renouvellement, loyer, résiliation", icon: "🏪" },
+];
 
 export default function DiagnosticScreen({ token }: { token: string }) {
   const [stage, setStage] = useState<Stage>("description");
@@ -45,210 +36,124 @@ export default function DiagnosticScreen({ token }: { token: string }) {
 
   const handleSubmitDescription = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (description.trim().length < 10) {
-      setError("Décrivez la situation en au moins quelques mots.");
-      return;
-    }
-    setLoading(true);
-    setError(null);
+    if (description.trim().length < 10) { setError("Décrivez la situation en au moins quelques mots."); return; }
+    setLoading(true); setError(null);
     try {
       const res = await fetch("/api/diagnostic/penal", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ description }),
       });
       const data = await res.json();
-      if (!data.success) {
-        setError(data.message || "Échec.");
-        return;
-      }
-      setDiagnosticId(data.diagnostic_id);
-      setQuestions(data.current_question_set || []);
-      const initialAnswers: Record<string, string> = {};
-      setAnswers(initialAnswers);
-      setStage("questions");
-    } catch (err: any) {
-      setError(`Erreur réseau : ${err?.message || "cause inconnue"}.`);
-    } finally {
-      setLoading(false);
-    }
+      if (!data.success) { setError(data.message || "Échec."); return; }
+      setDiagnosticId(data.diagnostic_id); setQuestions(data.current_question_set || []); setAnswers({}); setStage("questions");
+    } catch (err: any) { setError(`Erreur réseau : ${err?.message || "cause inconnue"}.`); }
+    finally { setLoading(false); }
   };
 
   const handleSubmitAnswers = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
+    e.preventDefault(); setLoading(true); setError(null);
     try {
       const res = await fetch("/api/diagnostic/penal/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ diagnostic_id: diagnosticId, answers }),
       });
       const data = await res.json();
-      if (!data.success) {
-        setError(data.message || "Échec de l'analyse.");
-        return;
-      }
-      setResult(data);
-      setStage("results");
-    } catch (err: any) {
-      setError(`Erreur réseau : ${err?.message || "cause inconnue"}.`);
-    } finally {
-      setLoading(false);
-    }
+      if (!data.success) { setError(data.message || "Échec de l'analyse."); return; }
+      setResult(data); setStage("results");
+    } catch (err: any) { setError(`Erreur réseau : ${err?.message || "cause inconnue"}.`); }
+    finally { setLoading(false); }
   };
 
-  const handleRestart = () => {
-    setStage("description");
-    setDescription("");
-    setDiagnosticId(null);
-    setQuestions([]);
-    setAnswers({});
-    setResult(null);
-    setError(null);
-  };
+  const handleRestart = () => { setStage("description"); setDescription(""); setDiagnosticId(null); setQuestions([]); setAnswers({}); setResult(null); setError(null); };
 
   return (
-    <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
-      <div>
-        <h2 className="text-2xl font-display font-bold text-white">Diagnostic pénal</h2>
-        <p className="text-sm text-slate-400 mt-1">Décrivez une situation, JurisCoach l'analyse à partir de la base juridique ivoirienne.</p>
-      </div>
-
-      {error && (
-        <div className="bg-red-950/40 border border-red-800 rounded-xl p-3 text-xs text-red-300 flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {error}
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8">
+      <section className="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-[#063f32] via-[#075c48] to-[#0c7660] p-5 sm:p-8 text-white shadow-xl">
+        <div className="absolute -right-16 -top-16 w-48 h-48 rounded-full bg-orange-400/15" />
+        <div className="absolute -left-10 -bottom-20 w-40 h-40 rounded-full bg-white/10" />
+        <div className="relative">
+          <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider">
+            <Scale className="w-3.5 h-3.5" /> JurisCoach Côte d'Ivoire
+          </div>
+          <h1 className="mt-4 text-2xl sm:text-4xl font-black tracking-tight">Vos problèmes juridiques, en langage simple.</h1>
+          <p className="mt-2 max-w-2xl text-sm sm:text-base text-emerald-50/90">Décrivez votre situation. JurisCoach vous aide à structurer les faits, identifier les points juridiques et préparer la prochaine étape.</p>
+          <div className="mt-5 flex flex-wrap gap-2 text-[10px] font-semibold">
+            <span className="rounded-full bg-white/10 px-3 py-1.5">🇨🇮 Droit ivoirien</span>
+            <span className="rounded-full bg-white/10 px-3 py-1.5">📱 Mobile & tablette</span>
+            <span className="rounded-full bg-white/10 px-3 py-1.5">🔒 Confidentiel</span>
+          </div>
         </div>
-      )}
+      </section>
 
-      {stage === "description" && (
-        <form onSubmit={handleSubmitDescription} className="space-y-3">
-          <textarea
-            required rows={5} placeholder="Ex: Un employé chargé de collecter des paiements pour l'entreprise ne les a jamais remis à la caisse..."
-            value={description} onChange={(e) => setDescription(e.target.value)}
-            className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-3 text-sm text-white placeholder-slate-500 resize-none"
-          />
-          <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {loading ? "Analyse..." : "Continuer"}
-          </button>
-        </form>
-      )}
+      <section className="mt-5 grid lg:grid-cols-[1.25fr_.75fr] gap-5">
+        <div className="rounded-[24px] bg-white border border-slate-200 shadow-sm p-4 sm:p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div><p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Parcours particulier</p><h2 className="text-lg sm:text-xl font-black text-slate-900">Quel est votre besoin ?</h2></div>
+            <div className="w-10 h-10 rounded-2xl bg-orange-50 flex items-center justify-center"><Search className="w-5 h-5 text-orange-500" /></div>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            {privateDomains.map((d) => {
+              const Icon = d.icon;
+              return <div key={d.title} className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 hover:border-emerald-300 transition">
+                <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center shadow-sm"><Icon className="w-4.5 h-4.5 text-emerald-700" /></div><div className="font-bold text-sm text-slate-900">{d.title}</div></div>
+                <p className="text-[11px] leading-4 text-slate-500 mt-2">{d.text}</p>
+              </div>;
+            })}
+          </div>
+          <div className="mt-5 border-t border-slate-100 pt-5">
+            <div className="flex items-center gap-2 mb-2"><span className="w-2 h-2 rounded-full bg-orange-500" /><p className="text-sm font-bold text-slate-900">Décrivez maintenant votre situation</p></div>
+            <form onSubmit={handleSubmitDescription} className="space-y-3">
+              <textarea required rows={5} value={description} onChange={(e) => setDescription(e.target.value)}
+                placeholder="Ex. : Mon propriétaire veut changer le cadenas de mon logement parce que j'ai un retard de loyer..."
+                className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none rounded-2xl px-4 py-3 text-sm text-slate-900 placeholder-slate-400 resize-none" />
+              <button type="submit" disabled={loading} className="w-full flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-black py-3.5 rounded-2xl cursor-pointer shadow-sm">
+                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}{loading ? "Analyse..." : "Analyser ma situation"}
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <aside className="space-y-4">
+          <div className="rounded-[24px] bg-slate-900 text-white p-5 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-orange-400">Professionnel & PME</p>
+            <h3 className="text-lg font-black mt-1">Un parcours dédié aux entreprises</h3>
+            <div className="mt-4 space-y-2">
+              {proDomains.map((d) => <div key={d.title} className="rounded-xl bg-white/5 border border-white/10 p-3 flex gap-3"><span className="text-lg">{d.icon}</span><div><div className="text-xs font-bold">{d.title}</div><div className="text-[10px] text-slate-400 mt-0.5">{d.text}</div></div></div>)}
+            </div>
+          </div>
+          <div className="rounded-[24px] bg-white border border-slate-200 p-5">
+            <p className="text-xs font-black text-slate-900">Ce que JurisCoach peut préparer</p>
+            <div className="mt-3 space-y-2 text-xs text-slate-600">
+              <div className="flex gap-2"><FileText className="w-4 h-4 text-emerald-600 shrink-0" /> Synthèse des faits et points à vérifier</div>
+              <div className="flex gap-2"><Scale className="w-4 h-4 text-emerald-600 shrink-0" /> Qualification et textes disponibles</div>
+              <div className="flex gap-2"><ArrowRight className="w-4 h-4 text-emerald-600 shrink-0" /> Prochaine démarche à envisager</div>
+            </div>
+          </div>
+        </aside>
+      </section>
+
+      {error && <div className="mt-5 bg-red-50 border border-red-200 rounded-2xl p-3 text-xs text-red-700 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{error}</div>}
 
       {stage === "questions" && (
-        <form onSubmit={handleSubmitAnswers} className="space-y-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-            <p className="text-xs text-slate-500 mb-1">Situation décrite</p>
-            <p className="text-sm text-slate-300">{description}</p>
-          </div>
-          {questions.map((q) => (
-            <div key={q.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-sm text-white font-medium mb-2.5">{q.question}</p>
-              {q.type === "radio" && q.options?.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {q.options.map((opt) => (
-                    <button
-                      key={opt} type="button"
-                      onClick={() => setAnswers({ ...answers, [q.field_name]: opt })}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium cursor-pointer border ${
-                        answers[q.field_name] === opt
-                          ? "bg-amber-600 border-amber-600 text-white"
-                          : "bg-slate-950 border-slate-700 text-slate-300"
-                      }`}
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <input
-                  type="text" value={answers[q.field_name] || ""}
-                  onChange={(e) => setAnswers({ ...answers, [q.field_name]: e.target.value })}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                />
-              )}
-            </div>
-          ))}
-          <button type="submit" disabled={loading}
-            className="w-full flex items-center justify-center gap-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-bold py-3 rounded-xl cursor-pointer">
-            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scale className="w-4 h-4" />}
-            {loading ? "Analyse en cours..." : "Obtenir le diagnostic"}
-          </button>
+        <form onSubmit={handleSubmitAnswers} className="mt-5 space-y-4">
+          <div className="rounded-[24px] bg-white border border-slate-200 p-5"><p className="text-[10px] uppercase tracking-wider font-bold text-emerald-700">Étape 2 · Clarification</p><p className="text-sm text-slate-600 mt-1">{description}</p></div>
+          {questions.map((q) => <div key={q.id} className="rounded-[20px] bg-white border border-slate-200 p-4 sm:p-5">
+            <p className="text-sm text-slate-900 font-bold mb-3">{q.question}</p>
+            {q.type === "radio" && q.options?.length ? <div className="flex flex-wrap gap-2">{q.options.map((opt) => <button key={opt} type="button" onClick={() => setAnswers({ ...answers, [q.field_name]: opt })} className={`px-3.5 py-2 rounded-xl text-xs font-bold cursor-pointer border transition ${answers[q.field_name] === opt ? "bg-emerald-700 border-emerald-700 text-white" : "bg-slate-50 border-slate-200 text-slate-700 hover:border-emerald-300"}`}>{opt}</button>)}</div> : <input type="text" value={answers[q.field_name] || ""} onChange={(e) => setAnswers({ ...answers, [q.field_name]: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-900" />}
+          </div>)}
+          <button type="submit" disabled={loading} className="w-full flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 text-white text-sm font-black py-3.5 rounded-2xl cursor-pointer">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Scale className="w-4 h-4" />}{loading ? "Analyse en cours..." : "Obtenir le résultat"}</button>
         </form>
       )}
 
       {stage === "results" && result && (
-        <div className="space-y-4">
-          <div className="bg-slate-900 border-2 border-amber-600 rounded-2xl p-5">
-            <p className="text-xs text-amber-500 uppercase tracking-wider font-semibold mb-1">Qualification retenue</p>
-            <p className="text-lg text-white font-display font-bold">{result.primary_qualification}</p>
-            {result.confidence_level && (
-              <p className="text-xs text-slate-400 mt-1">Confiance : {result.confidence_level}
-                {result.pertinence_score != null && ` (${result.pertinence_score}%)`}</p>
-            )}
-          </div>
-
-          {result.applicable_articles && result.applicable_articles.length > 0 ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold flex items-center gap-1.5">
-                <FileText className="w-3.5 h-3.5" /> Articles cités
-              </p>
-              {result.applicable_articles.map((art, i) => (
-                <div key={i} className="border-l-2 border-amber-600 pl-3">
-                  <p className="text-sm text-white font-medium">{art.article_number} — {art.title}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{art.text}</p>
-                  {art.source && <p className="text-[10px] text-slate-500 mt-1">Source : {art.source}</p>}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-400">
-              Aucun article de la base ne correspond précisément — la base est encore en cours de constitution.
-            </div>
-          )}
-
-          {result.sentences && (result.sentences.min_years != null || result.sentences.min_fine != null) && (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">Peines encourues</p>
-              <p className="text-sm text-slate-300">
-                {result.sentences.min_years}-{result.sentences.max_years} ans d'emprisonnement
-                {result.sentences.min_fine != null && `, amende ${result.sentences.min_fine?.toLocaleString("fr-FR")}-${result.sentences.max_fine?.toLocaleString("fr-FR")} FCFA`}
-              </p>
-              {result.prescription_info && <p className="text-xs text-slate-500 mt-1">Prescription : {result.prescription_info}</p>}
-            </div>
-          )}
-
-          {result.constitutive_elements && result.constitutive_elements.length > 0 && (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-              <p className="text-xs uppercase tracking-wider text-slate-400 font-semibold mb-2">Éléments constitutifs</p>
-              <ul className="space-y-1">
-                {result.constitutive_elements.map((el, i) => (
-                  <li key={i} className="text-sm text-slate-300 flex gap-2"><span className="text-amber-500">•</span>{el}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {result.missing_information && result.missing_information.length > 0 && (
-            <div className="bg-amber-950/30 border border-amber-800/50 rounded-xl p-4">
-              <p className="text-xs uppercase tracking-wider text-amber-500 font-semibold mb-2">Informations manquantes</p>
-              <ul className="space-y-1">
-                {result.missing_information.map((el, i) => (
-                  <li key={i} className="text-sm text-amber-200/80 flex gap-2"><span>•</span>{el}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <p className="text-[11px] text-slate-500 text-center px-4">
-            Ce diagnostic est une aide informative et ne remplace pas l'avis d'un avocat.
-          </p>
-
-          <button onClick={handleRestart}
-            className="w-full bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium py-3 rounded-xl cursor-pointer">
-            Nouveau diagnostic
-          </button>
+        <div className="mt-5 space-y-4">
+          <div className="rounded-[24px] bg-slate-900 text-white p-5 sm:p-6"><p className="text-[10px] uppercase tracking-wider text-orange-400 font-bold">Qualification</p><p className="text-xl font-black mt-1">{result.primary_qualification}</p>{result.confidence_level && <p className="text-xs text-slate-400 mt-1">Confiance : {result.confidence_level}{result.pertinence_score != null && ` · ${result.pertinence_score}%`}</p>}</div>
+          {result.applicable_articles?.length ? <div className="rounded-[20px] bg-white border border-slate-200 p-5 space-y-3"><p className="text-xs uppercase tracking-wider text-slate-500 font-bold flex items-center gap-1.5"><FileText className="w-3.5 h-3.5" /> Articles cités</p>{result.applicable_articles.map((art,i)=><div key={i} className="border-l-2 border-emerald-600 pl-3"><p className="text-sm text-slate-900 font-bold">{art.article_number} — {art.title}</p><p className="text-xs text-slate-500 mt-1">{art.text}</p>{art.source && <p className="text-[10px] text-slate-400 mt-1">Source : {art.source}</p>}</div>)}</div> : <div className="rounded-2xl bg-amber-50 border border-amber-200 p-4 text-xs text-amber-800">Aucun article correspondant n'est encore disponible dans la base pour cette analyse.</div>}
+          {result.sentences && (result.sentences.min_years != null || result.sentences.min_fine != null) && <div className="rounded-2xl bg-white border border-slate-200 p-5"><p className="text-xs uppercase tracking-wider text-slate-500 font-bold mb-2">Peines renseignées dans la base</p><p className="text-sm text-slate-700">{result.sentences.min_years}-{result.sentences.max_years} ans{result.sentences.min_fine != null && `, amende ${result.sentences.min_fine?.toLocaleString("fr-FR")}-${result.sentences.max_fine?.toLocaleString("fr-FR")} FCFA`}</p>{result.prescription_info && <p className="text-xs text-slate-400 mt-1">Prescription : {result.prescription_info}</p>}</div>}
+          {result.constitutive_elements?.length ? <div className="rounded-2xl bg-white border border-slate-200 p-5"><p className="text-xs uppercase tracking-wider text-slate-500 font-bold mb-2">Éléments à vérifier</p><ul className="space-y-1">{result.constitutive_elements.map((el,i)=><li key={i} className="text-sm text-slate-600 flex gap-2"><span className="text-orange-500">•</span>{el}</li>)}</ul></div> : null}
+          {result.missing_information?.length ? <div className="rounded-2xl bg-orange-50 border border-orange-200 p-5"><p className="text-xs uppercase tracking-wider text-orange-700 font-bold mb-2">Informations manquantes</p><ul className="space-y-1">{result.missing_information.map((el,i)=><li key={i} className="text-sm text-orange-800 flex gap-2"><span>•</span>{el}</li>)}</ul></div> : null}
+          <p className="text-[11px] text-slate-400 text-center px-4">Aide informative : JurisCoach ne remplace pas l'avis d'un avocat.</p>
+          <button onClick={handleRestart} className="w-full bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold py-3.5 rounded-2xl cursor-pointer">Nouvelle analyse</button>
         </div>
       )}
     </div>
