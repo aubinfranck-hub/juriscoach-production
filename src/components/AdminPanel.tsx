@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { UserPlus, Users, BookOpen, Scale } from "lucide-react";
+import { UserPlus, Users, BookOpen, Scale, Megaphone, Volume2, Trash2, Power } from "lucide-react";
 
 interface Account {
   phone: string;
@@ -25,6 +25,15 @@ export default function AdminPanel({ token }: { token: string }) {
   const [seedingCodeFoncier, setSeedingCodeFoncier] = useState(false);
   const [seedingLoiMariage, setSeedingLoiMariage] = useState(false);
   const [seedResult, setSeedResult] = useState<string | null>(null);
+  const [sponsoredAds, setSponsoredAds] = useState<any[]>([]);
+  const [sponsoredStats, setSponsoredStats] = useState<any | null>(null);
+  const [adTitle, setAdTitle] = useState("");
+  const [adDescription, setAdDescription] = useState("");
+  const [adPriority, setAdPriority] = useState("0");
+  const [adMaxPlays, setAdMaxPlays] = useState("1");
+  const [adFile, setAdFile] = useState<File | null>(null);
+  const [adUploading, setAdUploading] = useState(false);
+  const [adResult, setAdResult] = useState<string | null>(null);
 
   const [extractText, setExtractText] = useState("");
   const [extractSourceTitle, setExtractSourceTitle] = useState("");
@@ -182,6 +191,67 @@ export default function AdminPanel({ token }: { token: string }) {
     return pwd;
   };
 
+  const loadSponsoredAds = useCallback(async () => {
+    try {
+      const [adsRes, statsRes] = await Promise.all([
+        fetch("/api/admin/sponsored-ads", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/admin/sponsored-stats", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const adsData = await adsRes.json();
+      const statsData = await statsRes.json();
+      if (adsData.success) setSponsoredAds(adsData.ads || []);
+      if (statsData.success) setSponsoredStats(statsData.stats);
+    } catch {}
+  }, [token]);
+
+  const handleAdUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adFile || !adTitle.trim()) { setAdResult("Titre et fichier audio requis."); return; }
+    if (adFile.size > 12 * 1024 * 1024) { setAdResult("Fichier trop volumineux : 12 Mo maximum."); return; }
+    setAdUploading(true); setAdResult(null);
+    try {
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(adFile);
+      });
+      const res = await fetch("/api/admin/sponsored-ads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: adTitle.trim(), description: adDescription.trim(),
+          audioBase64: dataUrl, mimeType: adFile.type || "audio/mpeg",
+          durationSeconds: 0, priority: Number(adPriority) || 0, maxPlaysPerUser: Number(adMaxPlays) || 1,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.message || "Échec de l'ajout.");
+      setAdResult("Publicité audio ajoutée.");
+      setAdTitle(""); setAdDescription(""); setAdFile(null);
+      const input = document.getElementById("juriscoach-ad-file") as HTMLInputElement | null;
+      if (input) input.value = "";
+      loadSponsoredAds();
+    } catch (err: any) {
+      setAdResult(err.message || "Erreur réseau.");
+    } finally { setAdUploading(false); }
+  };
+
+  const toggleSponsoredAd = async (ad: any) => {
+    await fetch(`/api/admin/sponsored-ads/${ad.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ active: !ad.active }),
+    });
+    loadSponsoredAds();
+  };
+
+  const deleteSponsoredAd = async (id: number) => {
+    if (!confirm("Supprimer cette publicité audio ?")) return;
+    await fetch(`/api/admin/sponsored-ads/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    loadSponsoredAds();
+  };
+
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/accounts", { headers: { Authorization: `Bearer ${token}` } });
@@ -192,7 +262,7 @@ export default function AdminPanel({ token }: { token: string }) {
     }
   }, [token]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); loadSponsoredAds(); }, [load, loadSponsoredAds]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -237,6 +307,69 @@ export default function AdminPanel({ token }: { token: string }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
       <h2 className="text-2xl font-display font-bold text-white">Administration</h2>
+
+      <div className="bg-slate-900 border border-amber-600/50 rounded-2xl p-5 space-y-4">
+        <h3 className="flex items-center gap-2 text-xs uppercase tracking-wider text-amber-400 font-semibold">
+          <Megaphone className="w-4 h-4" /> Publicités audio — sessions sponsorisées
+        </h3>
+        <p className="text-[11px] text-slate-500">
+          Ajoutez les spots audio qui seront proposés avant les consultations sponsorisées de 3 minutes. La validation interactive est gérée automatiquement par JurisCoach.
+        </p>
+
+        {sponsoredStats && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            {[
+              ["Pubs actives", sponsoredStats.active_ads],
+              ["Sessions", sponsoredStats.total_sessions],
+              ["Validées", sponsoredStats.verified_sessions],
+              ["Terminées", sponsoredStats.completed_sessions],
+              ["En cours", sponsoredStats.active_consultations],
+            ].map(([label,value]) => (
+              <div key={String(label)} className="bg-slate-950 rounded-xl p-3 text-center">
+                <div className="text-lg font-bold text-amber-400">{value ?? 0}</div>
+                <div className="text-[9px] text-slate-500">{label}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleAdUpload} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5">
+          <div className="grid sm:grid-cols-2 gap-2">
+            <input required value={adTitle} onChange={e=>setAdTitle(e.target.value)} placeholder="Titre de la publicité"
+              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"/>
+            <input value={adDescription} onChange={e=>setAdDescription(e.target.value)} placeholder="Description / annonceur"
+              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"/>
+          </div>
+          <input id="juriscoach-ad-file" required type="file" accept="audio/*" onChange={e=>setAdFile(e.target.files?.[0] || null)}
+            className="w-full text-xs text-slate-400"/>
+          <div className="grid grid-cols-2 gap-2">
+            <input type="number" min="0" max="1000" value={adPriority} onChange={e=>setAdPriority(e.target.value)} placeholder="Priorité"
+              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+            <input type="number" min="1" max="100" value={adMaxPlays} onChange={e=>setAdMaxPlays(e.target.value)} placeholder="Max diffusions/utilisateur"
+              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+          </div>
+          <button disabled={adUploading} className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl">
+            <Volume2 className="w-3.5 h-3.5 inline mr-1"/> {adUploading ? "Envoi..." : "Ajouter la publicité audio"}
+          </button>
+          {adResult && <p className="text-xs text-slate-400">{adResult}</p>}
+        </form>
+
+        <div className="space-y-2">
+          {sponsoredAds.map(ad => (
+            <div key={ad.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
+              <div className="w-9 h-9 rounded-lg bg-slate-800 flex items-center justify-center"><Volume2 className="w-4 h-4 text-amber-400"/></div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-white truncate">{ad.title}</div>
+                <div className="text-[10px] text-slate-500">{ad.active ? "Active" : "Inactive"} · priorité {ad.priority} · max {ad.max_plays_per_user}/utilisateur</div>
+              </div>
+              <audio controls preload="none" src={`/api/sponsored/ads/${ad.id}/audio`} className="w-32 h-8"/>
+              <button onClick={()=>toggleSponsoredAd(ad)} title={ad.active ? "Désactiver" : "Activer"} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white"><Power className="w-4 h-4"/></button>
+              <button onClick={()=>deleteSponsoredAd(ad.id)} title="Supprimer" className="p-2 rounded-lg bg-red-950 text-red-300 hover:text-red-200"><Trash2 className="w-4 h-4"/></button>
+            </div>
+          ))}
+          {!sponsoredAds.length && <p className="text-xs text-slate-500">Aucune publicité audio enregistrée.</p>}
+        </div>
+      </div>
 
       <div className="bg-slate-900 border-2 border-amber-600 rounded-2xl p-5">
         <h3 className="flex items-center gap-1.5 text-xs uppercase tracking-wider text-amber-500 font-semibold mb-3">
