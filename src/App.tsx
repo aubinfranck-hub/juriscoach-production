@@ -93,7 +93,7 @@ export default function App() {
         ) : activeTab === "live" ? (
           <LiveVoiceScreen token={sessionToken} isPro={isPro} />
         ) : (
-          <DiagnosticScreen token={sessionToken} />
+          <DiagnosticScreen token={sessionToken} onLive={() => setActiveTab("live")} />
         )}
       </main>
     </div>
