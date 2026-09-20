@@ -123,7 +123,8 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
   const session = token ? sessions.get(token) : null;
-  if (session && userAccounts.get(session.phone)?.isAdmin) return next();
+  const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  if (session && Date.now() - session.createdAt <= SESSION_MAX_AGE_MS && userAccounts.get(session.phone)?.isAdmin) return next();
   return res.status(401).json({ success: false, message: "Accès admin refusé." });
 }
 
@@ -358,6 +359,7 @@ async function initDatabase(): Promise<void> {
     });
   }
   const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  await pool.query("DELETE FROM sessions WHERE created_at < $1", [Date.now() - SESSION_MAX_AGE_MS]);
   const sessionsRes = await pool.query("SELECT * FROM sessions");
   let loadedSessions = 0;
   for (const row of sessionsRes.rows) {
