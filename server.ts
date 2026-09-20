@@ -377,7 +377,7 @@ async function initDatabase(): Promise<void> {
   }
 }
 
-app.use(cors());
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean) : true }));
 app.use(express.json({ limit: "15mb" }));
 
 app.get("/api/health", (req, res) => {
@@ -2312,18 +2312,29 @@ app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) =>
       );
     } catch (e: any) { console.error("[LiveMemory] Erreur sauvegarde:", e.message); }
   }
+  const liveWsTickets = new Map<string, { phone: string; expiresAt: number }>();
   const wss = new WebSocketServer({ noServer: true });
+  // Ticket Live à usage unique : évite d'exposer le bearer token permanent dans l'URL WebSocket.
+  app.post("/api/live-ticket", requireAuth, async (req: any, res: any) => {
+    const acc = userAccounts.get(req.session.phone);
+    if (!acc?.isPro) return res.status(403).json({ success: false, message: "Fonctionnalité réservée aux comptes Pro." });
+    const ticket = crypto.randomBytes(24).toString("hex");
+    liveWsTickets.set(ticket, { phone: req.session.phone, expiresAt: Date.now() + 60 * 1000 });
+    res.json({ success: true, ticket });
+  });
 
   server.on("upgrade", (request, socket, head) => {
     const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
     if (pathname === "/api/live-ws") {
-      const token = searchParams.get("token") || "";
-      const session = sessions.get(token);
-      if (!token || !session) {
+      const ticket = searchParams.get("ticket") || "";
+      const ticketData = liveWsTickets.get(ticket);
+      if (!ticket || !ticketData || Date.now() > ticketData.expiresAt) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
+      liveWsTickets.delete(ticket);
+      const session = { phone: ticketData.phone, createdAt: Date.now() };
       const acc = userAccounts.get(session.phone);
       if (!acc?.isPro) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
