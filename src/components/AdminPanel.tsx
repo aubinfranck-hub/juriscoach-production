@@ -35,6 +35,10 @@ export default function AdminPanel({ token }: { token: string }) {
   const [adCampaignRef, setAdCampaignRef] = useState("");
   const [adPrice1000, setAdPrice1000] = useState("50000");
   const [sponsorReport, setSponsorReport] = useState<any | null>(null);
+  const [simSessions,setSimSessions]=useState("1000");
+  const [simMinutes,setSimMinutes]=useState("3");
+  const [simPrice,setSimPrice]=useState("75000");
+  const [simInfra,setSimInfra]=useState("5000");
   const [adFile, setAdFile] = useState<File | null>(null);
   const [adUploading, setAdUploading] = useState(false);
   const [adResult, setAdResult] = useState<string | null>(null);
@@ -328,6 +332,21 @@ export default function AdminPanel({ token }: { token: string }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
       <h2 className="text-2xl font-display font-bold text-white">Administration</h2>
+
+      <div className="bg-slate-900 border border-emerald-700/50 rounded-2xl p-5 space-y-4">
+        <h3 className="text-xs uppercase tracking-wider text-emerald-400 font-semibold">Simulateur commercial — campagne sponsorisée</h3>
+        <p className="text-[11px] text-slate-500">Calcule le coût estimatif IA et la marge avant de proposer un devis au client.</p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <input type="number" min="1" value={simSessions} onChange={e=>setSimSessions(e.target.value)} placeholder="Écoutes" className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+          <input type="number" min="1" value={simMinutes} onChange={e=>setSimMinutes(e.target.value)} placeholder="Minutes/session" className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+          <input type="number" min="0" value={simPrice} onChange={e=>setSimPrice(e.target.value)} placeholder="Prix client FCFA" className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+          <input type="number" min="0" value={simInfra} onChange={e=>setSimInfra(e.target.value)} placeholder="Infrastructure FCFA" className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {(()=>{const n=Number(simSessions)||0,m=Number(simMinutes)||0,p=Number(simPrice)||0,i=Number(simInfra)||0;const ai=Math.round(n*m*0.023*600);const total=ai+i;const margin=p-total;return [["Coût IA estimé",ai+" FCFA"],["Infrastructure",i+" FCFA"],["Coût total",total+" FCFA"],["Marge brute",margin+" FCFA"]].map(([l,v])=><div key={l} className="bg-slate-950 rounded-xl p-3 text-center"><div className="text-sm font-bold text-emerald-400">{v}</div><div className="text-[9px] text-slate-500">{l}</div></div>);})()}
+        </div>
+        <div className="text-[10px] text-slate-500">Hypothèse actuelle : 0,023 $/minute audio combiné et 600 FCFA/$ pour une estimation de gestion. Le coût réel doit être recalculé selon la consommation API et le taux de change.</div>
+      </div>
 
       <div className="bg-slate-900 border border-sky-700/50 rounded-2xl p-5 space-y-4">
         <h3 className="flex items-center gap-2 text-xs uppercase tracking-wider text-sky-400 font-semibold"><Users className="w-4 h-4"/> CRM — clients & relances</h3>
