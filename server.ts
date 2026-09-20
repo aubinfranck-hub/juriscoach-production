@@ -2511,7 +2511,7 @@ app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) =>
     res.json({ success: true, ticket });
   });
 
-  server.on("upgrade", (request, socket, head) => {
+  server.on("upgrade", async (request, socket, head) => {
     const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
     if (pathname === "/api/live-ws") {
       const ticket = searchParams.get("ticket") || "";
@@ -2535,7 +2535,7 @@ app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) =>
           "SELECT status, consultation_started_at, ends_at FROM sponsored_sessions WHERE id=$1 AND phone=$2 AND challenge_verified=true",
           [ticketData.sessionId, session.phone]
         );
-        if (!rows.length || rows[0].status !== "consulting" || !rows[0].ends_at || new Date(rows[0].ends_at).getTime() <= Date.now()) {
+        if (!rows.length || !["ready","consulting"].includes(rows[0].status) || (rows[0].status === "consulting" && (!rows[0].ends_at || new Date(rows[0].ends_at).getTime() <= Date.now()))) {
           socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
           socket.destroy();
           return;
@@ -2558,6 +2558,41 @@ app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) =>
     const userPhone: string = (clientWs as any).__phone || "";
     const sessionTranscript: { role: "user" | "assistant"; text: string; ts: number }[] = [];
     if (userPhone) liveSessionTranscripts.set(userPhone, sessionTranscript);
+    const liveMode: "pro" | "sponsored" = (clientWs as any).__mode || "pro";
+    const sponsoredSessionId: string | undefined = (clientWs as any).__sponsoredSessionId;
+    let sponsoredTimerStarted = false;
+    let sponsoredEnding = false;
+    let sponsoredWarningTimer: NodeJS.Timeout | null = null;
+    let sponsoredEndTimer: NodeJS.Timeout | null = null;
+    let sponsoredGraceTimer: NodeJS.Timeout | null = null;
+
+    const startSponsoredTimer = async () => {
+      if (liveMode !== "sponsored" || !sponsoredSessionId || sponsoredTimerStarted || !pool) return;
+      sponsoredTimerStarted = true;
+      const now = new Date();
+      const end = new Date(now.getTime() + 180000);
+      await pool.query(
+        "UPDATE sponsored_sessions SET status='consulting', consultation_started_at=$2, ends_at=$3 WHERE id=$1 AND phone=$4 AND challenge_verified=true",
+        [sponsoredSessionId, now, end, userPhone]
+      );
+      clientWs.send(JSON.stringify({ type:"consultationStarted", durationSeconds:180, endsAt:end.toISOString() }));
+      sponsoredWarningTimer = setTimeout(() => {
+        if (!isClosed) clientWs.send(JSON.stringify({ type:"subscriptionWarning", secondsRemaining:10 }));
+      }, 170000);
+      sponsoredEndTimer = setTimeout(() => {
+        if (isClosed || sponsoredEnding) return;
+        sponsoredEnding = true;
+        clientWs.send(JSON.stringify({ type:"consultationEnding" }));
+        if (geminiSession) {
+          try {
+            geminiSession.sendClientContent({ turns:[{ role:"user", parts:[{ text:"La session sponsorisée arrive à son terme. Termine naturellement ta réponse en cours, puis indique brièvement que la session de 3 minutes est terminée et que l'utilisateur peut appeler ou écrire au 0707312797 pour poursuivre avec JurisCoach." }]}] });
+          } catch {}
+        }
+        sponsoredGraceTimer = setTimeout(() => {
+          if (!isClosed) { try { clientWs.close(); } catch {} }
+        }, 10000);
+      }, 180000);
+    };
 
     clientWs.on("message", async (data) => {
       try {
@@ -2620,6 +2655,9 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
                       if (part.text) {
                       clientWs.send(JSON.stringify({ type: "userTranscript", text: part.text }));
                       sessionTranscript.push({ role: "user", text: part.text, ts: Date.now() });
+                      if (liveMode === "sponsored" && !sponsoredTimerStarted && !sponsoredEnding) {
+                        await startSponsoredTimer();
+                      }
                     }
                     }
                   }
@@ -2663,6 +2701,12 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
     clientWs.on("close", async () => {
       console.log("[WebSocket] Client déconnecté du bridge vocal Live.");
       isClosed = true;
+      if (sponsoredWarningTimer) clearTimeout(sponsoredWarningTimer);
+      if (sponsoredEndTimer) clearTimeout(sponsoredEndTimer);
+      if (sponsoredGraceTimer) clearTimeout(sponsoredGraceTimer);
+      if (sponsoredSessionId && pool && liveMode === "sponsored") {
+        await pool.query("UPDATE sponsored_sessions SET status='completed', completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND phone=$2 AND status IN ('consulting','ready')", [sponsoredSessionId, userPhone]).catch(() => {});
+      }
       if (geminiSession) { try { geminiSession.close(); } catch (e) {} }
       // Sauvegarder le résumé de la session en DB
       if (userPhone && sessionTranscript.length > 1) {
