@@ -31,6 +31,10 @@ export default function AdminPanel({ token }: { token: string }) {
   const [adDescription, setAdDescription] = useState("");
   const [adPriority, setAdPriority] = useState("0");
   const [adMaxPlays, setAdMaxPlays] = useState("1");
+  const [adAdvertiser, setAdAdvertiser] = useState("");
+  const [adCampaignRef, setAdCampaignRef] = useState("");
+  const [adPrice1000, setAdPrice1000] = useState("50000");
+  const [sponsorReport, setSponsorReport] = useState<any | null>(null);
   const [adFile, setAdFile] = useState<File | null>(null);
   const [adUploading, setAdUploading] = useState(false);
   const [adResult, setAdResult] = useState<string | null>(null);
@@ -237,13 +241,13 @@ export default function AdminPanel({ token }: { token: string }) {
         body: JSON.stringify({
           title: adTitle.trim(), description: adDescription.trim(),
           audioBase64: dataUrl, mimeType: adFile.type || "audio/mpeg",
-          durationSeconds: 0, priority: Number(adPriority) || 0, maxPlaysPerUser: Number(adMaxPlays) || 1,
+          durationSeconds: 0, priority: Number(adPriority) || 0, maxPlaysPerUser: Number(adMaxPlays) || 1, advertiserName: adAdvertiser.trim(), campaignRef: adCampaignRef.trim(), pricePer1000Xaf: Number(adPrice1000) || 0,
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.message || "Échec de l'ajout.");
       setAdResult("Publicité audio ajoutée.");
-      setAdTitle(""); setAdDescription(""); setAdFile(null);
+      setAdTitle(""); setAdDescription(""); setAdAdvertiser(""); setAdCampaignRef(""); setAdFile(null);
       const input = document.getElementById("juriscoach-ad-file") as HTMLInputElement | null;
       if (input) input.value = "";
       loadSponsoredAds();
@@ -260,6 +264,8 @@ export default function AdminPanel({ token }: { token: string }) {
     });
     loadSponsoredAds();
   };
+
+  const loadSponsorReport = async (id:number) => { try { const r=await fetch(`/api/admin/sponsored-report/${id}`,{headers:{Authorization:`Bearer ${token}`}}); const d=await r.json(); if(d.success)setSponsorReport(d); } catch {} };
 
   const deleteSponsoredAd = async (id: number) => {
     if (!confirm("Supprimer cette publicité audio ?")) return;
@@ -327,7 +333,7 @@ export default function AdminPanel({ token }: { token: string }) {
         <h3 className="flex items-center gap-2 text-xs uppercase tracking-wider text-sky-400 font-semibold"><Users className="w-4 h-4"/> CRM — clients & relances</h3>
         <div className="flex gap-2"><input value={crmSearch} onChange={e=>setCrmSearch(e.target.value)} placeholder="Rechercher téléphone, nom ou email..." className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/><button onClick={loadCrm} className="bg-sky-700 text-white text-xs px-4 rounded-xl">Actualiser</button></div>
         <div className="max-h-64 overflow-auto space-y-1.5">{crmLoading?<p className="text-xs text-slate-500">Chargement...</p>:crmCustomers.map(c=><button key={c.phone} onClick={()=>selectCustomer(c)} className={"w-full text-left bg-slate-950 border rounded-xl p-3 "+(selectedCustomer?.phone===c.phone?"border-sky-500":"border-slate-800")}><div className="flex justify-between"><span className="text-xs text-white font-mono">{c.phone}</span><span className="text-[10px] text-sky-400">{c.followup_status||"A_FAIRE"}</span></div><div className="text-xs text-slate-400">{c.full_name||"Client sans nom"}{c.next_followup_at?" • relance "+new Date(c.next_followup_at).toLocaleString("fr-FR"):""}</div></button>)}</div>
-        {selectedCustomer && <div className="border-t border-slate-800 pt-4 space-y-2.5"><div className="text-xs text-white font-semibold">{selectedCustomer.full_name||selectedCustomer.phone}</div><textarea value={crmNote} onChange={e=>setCrmNote(e.target.value)} rows={3} placeholder="Notes CRM..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white"/><div className="grid grid-cols-2 gap-2"><input type="datetime-local" value={crmFollowup} onChange={e=>setCrmFollowup(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white"/><select value={crmStatus} onChange={e=>setCrmStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white"><option>A_FAIRE</option><option>FAIT</option><option>ANNULEE</option></select></div><div className="flex gap-2"><button onClick={saveCustomerCrm} className="flex-1 bg-sky-700 text-white text-xs font-bold py-2.5 rounded-xl">Enregistrer</button><button onClick={logCustomerContact} className="flex-1 bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl">Journaliser relance</button></div><div className="max-h-32 overflow-auto space-y-1">{crmEvents.map(e=><div key={e.id} className="text-[10px] text-slate-500 bg-slate-950 rounded-lg p-2">{new Date(e.created_at).toLocaleString("fr-FR")} • {e.channel} • {e.event_type}<br/>{e.notes||e.subject||""}</div>)}</div></div>}
+        {selectedCustomer && <div className="border-t border-slate-800 pt-4 space-y-2.5"><div className="text-xs text-white font-semibold">{selectedCustomer.full_name||selectedCustomer.phone}</div><textarea value={crmNote} onChange={e=>setCrmNote(e.target.value)} rows={3} placeholder="Notes CRM..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white"/><div className="grid grid-cols-3 gap-2"><input type="number" min="0" value={adPrice1000} onChange={e=>setAdPrice1000(e.target.value)} placeholder="Prix / 1000 écoutes (FCFA)" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/><input type="number" min="0" max="1000" value={adPriority} onChange={e=>setAdPriority(e.target.value)} placeholder="Priorité" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/><input type="number" min="1" max="100" value={adMaxPlays} onChange={e=>setAdMaxPlays(e.target.value)} placeholder="Max/user" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/></div><div className="hidden"><input type="datetime-local" value={crmFollowup} onChange={e=>setCrmFollowup(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white"/><select value={crmStatus} onChange={e=>setCrmStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white"><option>A_FAIRE</option><option>FAIT</option><option>ANNULEE</option></select></div><div className="flex gap-2"><button onClick={saveCustomerCrm} className="flex-1 bg-sky-700 text-white text-xs font-bold py-2.5 rounded-xl">Enregistrer</button><button onClick={logCustomerContact} className="flex-1 bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl">Journaliser relance</button></div><div className="max-h-32 overflow-auto space-y-1">{crmEvents.map(e=><div key={e.id} className="text-[10px] text-slate-500 bg-slate-950 rounded-lg p-2">{new Date(e.created_at).toLocaleString("fr-FR")} • {e.channel} • {e.event_type}<br/>{e.notes||e.subject||""}</div>)}</div></div>}
       </div>
 
       <div className="bg-slate-900 border border-amber-600/50 rounded-2xl p-5 space-y-4">
@@ -356,7 +362,7 @@ export default function AdminPanel({ token }: { token: string }) {
         )}
 
         <form onSubmit={handleAdUpload} className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5">
-          <div className="grid sm:grid-cols-2 gap-2">
+          <div className="grid sm:grid-cols-2 gap-2"><input value={adAdvertiser} onChange={e=>setAdAdvertiser(e.target.value)} placeholder="Client / annonceur" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"/><input value={adCampaignRef} onChange={e=>setAdCampaignRef(e.target.value)} placeholder="Référence campagne" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"/></div><div className="grid sm:grid-cols-2 gap-2">
             <input required value={adTitle} onChange={e=>setAdTitle(e.target.value)} placeholder="Titre de la publicité"
               className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white placeholder-slate-500"/>
             <input value={adDescription} onChange={e=>setAdDescription(e.target.value)} placeholder="Description / annonceur"
@@ -365,10 +371,8 @@ export default function AdminPanel({ token }: { token: string }) {
           <input id="juriscoach-ad-file" required type="file" accept="audio/*" onChange={e=>setAdFile(e.target.files?.[0] || null)}
             className="w-full text-xs text-slate-400"/>
           <div className="grid grid-cols-2 gap-2">
-            <input type="number" min="0" max="1000" value={adPriority} onChange={e=>setAdPriority(e.target.value)} placeholder="Priorité"
-              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
-            <input type="number" min="1" max="100" value={adMaxPlays} onChange={e=>setAdMaxPlays(e.target.value)} placeholder="Max diffusions/utilisateur"
-              className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+            <input type="number" min="0" max="1000" 
+            <input type="number" min="1" max="100" 
           </div>
           <button disabled={adUploading} className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl">
             <Volume2 className="w-3.5 h-3.5 inline mr-1"/> {adUploading ? "Envoi..." : "Ajouter la publicité audio"}
@@ -376,6 +380,7 @@ export default function AdminPanel({ token }: { token: string }) {
           {adResult && <p className="text-xs text-slate-400">{adResult}</p>}
         </form>
 
+        {sponsorReport && <div className="bg-slate-950 border border-sky-800 rounded-xl p-4 space-y-2"><div className="flex justify-between"><b className="text-sm text-white">Rapport campagne — {sponsorReport.summary?.title}</b><button onClick={()=>setSponsorReport(null)} className="text-xs text-slate-500">Fermer</button></div><div className="grid grid-cols-2 sm:grid-cols-5 gap-2">{[["Écoutes confirmées",sponsorReport.summary?.confirmed_listens],["Sessions",sponsorReport.summary?.sessions],["Terminées",sponsorReport.summary?.completed_sessions],["Numéros uniques",sponsorReport.summary?.unique_phones],["Facturation FCFA",Number(sponsorReport.summary?.billable_plays||0)/1000*Number(sponsorReport.summary?.price_per_1000_xaf||0)].map(([l,v])=><div className="bg-slate-900 rounded-lg p-2 text-center" key={String(l)}><b className="text-sky-400 text-sm">{typeof v==="number"?Math.round(v):v}</b><div className="text-[9px] text-slate-500">{l}</div></div>)}</div><div className="max-h-48 overflow-auto">{(sponsorReport.details||[]).map((d:any)=><div key={d.id} className="text-[10px] text-slate-500 border-b border-slate-800 py-1.5"><span className="font-mono text-white">{d.phone}</span> • {d.challenge_verified?"ÉCOUTE CONFIRMÉE":"Non confirmée"} • {d.status} • {new Date(d.created_at).toLocaleString("fr-FR")}</div>)}</div></div>}
         <div className="space-y-2">
           {sponsoredAds.map(ad => (
             <div key={ad.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
@@ -385,7 +390,7 @@ export default function AdminPanel({ token }: { token: string }) {
                 <div className="text-[10px] text-slate-500">{ad.active ? "Active" : "Inactive"} · priorité {ad.priority} · max {ad.max_plays_per_user}/utilisateur</div>
               </div>
               <audio controls preload="none" src={`/api/sponsored/ads/${ad.id}/audio`} className="w-32 h-8"/>
-              <button onClick={()=>toggleSponsoredAd(ad)} title={ad.active ? "Désactiver" : "Activer"} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white"><Power className="w-4 h-4"/></button>
+              <button onClick={()=>loadSponsorReport(ad.id)} className="text-sky-400 text-xs mr-2">Rapport</button><button onClick={()=>toggleSponsoredAd(ad)} title={ad.active ? "Désactiver" : "Activer"} className="p-2 rounded-lg bg-slate-800 text-slate-300 hover:text-white"><Power className="w-4 h-4"/></button>
               <button onClick={()=>deleteSponsoredAd(ad.id)} title="Supprimer" className="p-2 rounded-lg bg-red-950 text-red-300 hover:text-red-200"><Trash2 className="w-4 h-4"/></button>
             </div>
           ))}
