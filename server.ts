@@ -318,6 +318,9 @@ async function initDatabase(): Promise<void> {
       active BOOLEAN NOT NULL DEFAULT true,
       priority INTEGER NOT NULL DEFAULT 0,
       max_plays_per_user INTEGER NOT NULL DEFAULT 1,
+      advertiser_name VARCHAR(200),
+      campaign_ref VARCHAR(100),
+      price_per_1000_xaf INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
@@ -400,6 +403,10 @@ async function initDatabase(): Promise<void> {
   } catch (err: any) {
     console.warn("[DB] Ajout de challenge_attempts échoué :", err.message);
   }
+
+  try {
+    await pool.query(`ALTER TABLE sponsored_ads ADD COLUMN IF NOT EXISTS advertiser_name VARCHAR(200), ADD COLUMN IF NOT EXISTS campaign_ref VARCHAR(100), ADD COLUMN IF NOT EXISTS price_per_1000_xaf INTEGER NOT NULL DEFAULT 0`);
+  } catch (err: any) { console.warn("[DB] Colonnes sponsor annonceur échouées :", err.message); }
 
   try {
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_pro BOOLEAN NOT NULL DEFAULT false`);
@@ -503,7 +510,7 @@ app.get("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
 
 app.post("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
   if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
-  const { title, description, audioBase64, mimeType, durationSeconds, priority, maxPlaysPerUser } = req.body || {};
+  const { title, description, audioBase64, mimeType, durationSeconds, priority, maxPlaysPerUser, advertiserName, campaignRef, pricePer1000Xaf } = req.body || {};
   if (!title || !audioBase64) return res.status(400).json({ success:false, message:"Titre et fichier audio requis." });
   const match = String(audioBase64).match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return res.status(400).json({ success:false, message:"Audio invalide. Utilisez un fichier audio encodé en base64." });
@@ -511,12 +518,14 @@ app.post("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
   if (raw.length > 12 * 1024 * 1024) return res.status(413).json({ success:false, message:"Audio trop volumineux (12 Mo maximum)." });
   const mime = String(mimeType || match[1] || "audio/mpeg").slice(0,100);
   const { rows } = await pool.query(
-    `INSERT INTO sponsored_ads (title, description, audio_data, mime_type, duration_seconds, priority, max_plays_per_user)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, title, description, mime_type, duration_seconds, active, priority, max_plays_per_user, created_at`,
+    `INSERT INTO sponsored_ads (title, description, audio_data, mime_type, duration_seconds, priority, max_plays_per_user, advertiser_name, campaign_ref, price_per_1000_xaf)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, title, description, mime_type, duration_seconds, active, priority, max_plays_per_user, advertiser_name, campaign_ref, price_per_1000_xaf, created_at`,
     [String(title).slice(0,200), description ? String(description).slice(0,2000) : null, raw, mime,
      Number.isFinite(Number(durationSeconds)) ? Math.max(0, Math.min(3600, Number(durationSeconds))) : null,
      Number.isFinite(Number(priority)) ? Math.max(0, Math.min(1000, Number(priority))) : 0,
-     Number.isFinite(Number(maxPlaysPerUser)) ? Math.max(1, Math.min(100, Number(maxPlaysPerUser))) : 1]
+     Number.isFinite(Number(maxPlaysPerUser)) ? Math.max(1, Math.min(100, Number(maxPlaysPerUser))) : 1,
+     advertiserName ? String(advertiserName).slice(0,200) : null, campaignRef ? String(campaignRef).slice(0,100) : null,
+     Number.isFinite(Number(pricePer1000Xaf)) ? Math.max(0, Math.round(Number(pricePer1000Xaf))) : 0]
   );
   res.status(201).json({ success:true, ad:rows[0] });
 });
@@ -577,6 +586,30 @@ app.get("/api/sponsored/ads/:id/audio", async (req,res) => {
   res.setHeader("Content-Type",rows[0].mime_type || "audio/mpeg");
   res.setHeader("Cache-Control","private, max-age=300");
   res.send(rows[0].audio_data);
+});
+
+
+app.get("/api/admin/sponsored-report/:id", requireAdminAuth, async (req,res) => {
+  if(!pool)return res.status(503).json({success:false,message:"Service indisponible."});
+  const id=Number(req.params.id); const {rows}=await pool.query(
+   `SELECT a.id,a.title,a.advertiser_name,a.campaign_ref,a.price_per_1000_xaf,
+      COUNT(s.id)::int AS sessions,
+      COUNT(s.id) FILTER (WHERE s.challenge_verified)::int AS confirmed_listens,
+      COUNT(s.id) FILTER (WHERE s.status='completed')::int AS completed_sessions,
+      COUNT(DISTINCT s.phone)::int AS unique_phones,
+      COALESCE(SUM(CASE WHEN s.challenge_verified THEN 1 ELSE 0 END),0)::int AS billable_plays
+    FROM sponsored_ads a LEFT JOIN sponsored_sessions s ON s.ad_id=a.id WHERE a.id=$1
+    GROUP BY a.id`,[id]);
+  if(!rows.length)return res.status(404).json({success:false,message:"Campagne introuvable."});
+  const {rows:details}=await pool.query(`SELECT s.id,s.phone,s.challenge_verified,s.challenge_attempts,s.status,s.created_at,s.consultation_started_at,s.completed_at FROM sponsored_sessions s WHERE s.ad_id=$1 ORDER BY s.created_at DESC LIMIT 2000`,[id]);
+  res.json({success:true,summary:rows[0],details});
+});
+
+app.get("/api/admin/sponsored-cost-estimate", requireAdminAuth, async (req,res) => {
+  const sessions=Math.max(0,Number(req.query.sessions||1000)); const minutes=Math.max(0,Number(req.query.minutes||3));
+  const inputPerMin=0.005, outputPerMin=0.018, usdToXaf=Math.max(1,Number(req.query.usdToXaf||600));
+  const geminiPerSessionUsd=(inputPerMin+outputPerMin)*minutes;
+  res.json({success:true,model:"gemini-3.1-flash-live-preview",sessions,minutes,usdToXaf,inputAudioUsdPerMinute:inputPerMin,outputAudioUsdPerMinute:outputPerMin,estimatedGeminiUsd:geminiPerSessionUsd*sessions,estimatedGeminiXaf:Math.round(geminiPerSessionUsd*sessions*usdToXaf),estimatedPerSessionXaf:Math.round(geminiPerSessionUsd*usdToXaf),note:"Estimation haute si l'audio entrant et sortant sont consommés pendant toute la durée; les transcriptions texte, hébergement et autres coûts sont à ajouter."});
 });
 
 app.post("/api/sponsored/start", requireAuth, async (req:any,res:any) => {
