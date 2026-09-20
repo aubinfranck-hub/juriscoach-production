@@ -175,6 +175,7 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
       setSponsoredSessionId(data.sessionId);
       setSponsoredAd(data.ad);
       setChallengeDigit(data.challengeDigit);
+    setAdReady(false);
       const audio = new Audio(data.audioUrl);
       adAudioRef.current = audio;
       audio.onended = () => setChallengeMessage(`Publicité terminée. Appuyez maintenant sur le chiffre ${data.challengeDigit} pour confirmer votre écoute.`);
