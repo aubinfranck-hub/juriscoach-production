@@ -11,7 +11,7 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
   const [transcript, setTranscript] = useState("");
   const [sponsoredSessionId, setSponsoredSessionId] = useState<string | null>(null);
   const [sponsoredAd, setSponsoredAd] = useState<any | null>(null);
-  const [challengeDigit, setChallengeDigit] = useState<number | null>(null);
+  const [, setChallengeDigit] = useState<number | null>(null);
   const [challengeMessage, setChallengeMessage] = useState("");
   const [remaining, setRemaining] = useState<number | null>(null);
 
@@ -222,8 +222,6 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
   };
 
   useEffect(() => () => cleanup(), []);
-
-  if (!isPro && mode === "pro") setMode("sponsored");
 
   return (
     <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
