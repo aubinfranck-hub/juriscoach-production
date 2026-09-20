@@ -176,9 +176,33 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
       setSponsoredAd(data.ad);
       setChallengeDigit(data.challengeDigit);
     setAdReady(false);
+      const startRes = await fetch("/api/sponsored/ad-start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ sessionId: data.sessionId }),
+      });
+      const startData = await startRes.json();
+      if (!startRes.ok || !startData.success) throw new Error(startData.message || "Impossible de démarrer l'écoute.");
       const audio = new Audio(data.audioUrl);
       adAudioRef.current = audio;
-      audio.onended = () => setChallengeMessage(`Publicité terminée. Appuyez maintenant sur le chiffre ${data.challengeDigit} pour confirmer votre écoute.`);
+      audio.onended = async () => {
+        try {
+          const completeRes = await fetch("/api/sponsored/ad-complete", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ sessionId: data.sessionId }),
+          });
+          const completeData = await completeRes.json();
+          if (!completeRes.ok || !completeData.success) {
+            setChallengeMessage(completeData.message || "Écoute non confirmée.");
+            return;
+          }
+          setAdReady(true);
+          setChallengeMessage(`Publicité terminée. Appuyez maintenant sur le chiffre ${data.challengeDigit} pour confirmer votre écoute.`);
+        } catch {
+          setChallengeMessage("Impossible de confirmer l'écoute. Réessayez.");
+        }
+      };
       await audio.play();
     } catch (err: any) {
       setError(err.message || "Impossible de lancer la publicité.");
