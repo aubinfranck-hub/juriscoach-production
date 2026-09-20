@@ -13,7 +13,8 @@ export type LegalTemplate = {
 };
 
 export const LEGAL_TEMPLATES: LegalTemplate[] = [
-  { id: "logement", title: "Logement", group: "Particulier", description: "Loyer, caution, expulsion et litiges locatifs.", placeholder: "Ex. Mon propriétaire veut augmenter mon loyer...", chips: ["Loyer", "Caution", "Expulsion"], icon: Home, tone: "emerald" },
+  { id: "accueil", title: "Accueil juridique", group: "Outils", description: "Point de départ pour identifier votre besoin juridique et choisir le bon parcours.", placeholder: "Décrivez simplement votre situation juridique...", chips: ["Comprendre", "Vérifier", "Agir"], icon: Scale, tone: "emerald" },
+  { id: "logement", title: "Logement & Bail d’habitation", group: "Particulier", description: "Loyer, caution, état des lieux, réparations, résiliation et litiges entre propriétaire et locataire.", placeholder: "Ex. Mon propriétaire veut augmenter mon loyer ou mettre fin au bail...", chips: ["Loyer", "Caution", "Résiliation"], icon: Home, tone: "blue" },
   { id: "foncier", title: "Foncier & Terrains", group: "Particulier", description: "Terrain, ACD, certificat de propriété et litiges fonciers.", placeholder: "Ex. J'ai acheté un terrain et je veux vérifier mes droits...", chips: ["Terrain", "ACD", "Double vente"], icon: Home, tone: "green" },
   { id: "travail", title: "Travail & Salaire", group: "Particulier", description: "Contrat, licenciement, salaire, CNPS et indemnités.", placeholder: "Ex. Mon employeur veut me licencier...", chips: ["Licenciement", "Salaire", "CNPS"], icon: BriefcaseBusiness, tone: "orange" },
   { id: "famille", title: "Famille", group: "Particulier", description: "Mariage, séparation, filiation, pension et enfants.", placeholder: "Ex. Je veux comprendre mes droits concernant...", chips: ["Pension", "Filiation", "Séparation"], icon: Users, tone: "violet" },
@@ -28,7 +29,7 @@ export const LEGAL_TEMPLATES: LegalTemplate[] = [
   { id: "impayes", title: "Factures & Impayés", group: "Entreprise", description: "Recouvrement, mise en demeure et injonction de payer.", placeholder: "Ex. Un client ne paie pas ma facture depuis...", chips: ["Impayé", "Mise en demeure", "Recouvrement"], icon: FileText, tone: "orange" },
   { id: "documents", title: "Documents juridiques", group: "Outils", description: "Préparer une mise en demeure, lettre, contrat ou demande.", placeholder: "Ex. Je veux préparer une mise en demeure pour...", chips: ["Mise en demeure", "Lettre", "Contrat"], icon: FileText, tone: "teal" },
   { id: "orientation", title: "Orientation avocat", group: "Outils", description: "Structurer votre dossier avant de consulter un professionnel.", placeholder: "Ex. Voici les faits de mon dossier...", chips: ["Préparer dossier", "Questions", "Pièces"], icon: Search, tone: "blue" },
-  { id: "general", title: "Question juridique", group: "Outils", description: "Posez une question et JurisCoach vous aide à la structurer.", placeholder: "Décrivez simplement votre situation juridique...", chips: ["Comprendre", "Vérifier", "Agir"], icon: Scale, tone: "emerald" },
+
 ];
 
 export default function LegalTemplatePicker({
@@ -44,7 +45,7 @@ export default function LegalTemplatePicker({
 }) {
   const selected = LEGAL_TEMPLATES.find((t) => t.id === selectedId) || LEGAL_TEMPLATES[0];
   const Icon = selected.icon;
-  const isTemplateOne = selected.id === "general";
+  const isTemplateOne = selected.id === "accueil";
   const groups = ["Particulier", "Urgence", "Entreprise", "Outils"];
 
   return (
@@ -93,11 +94,16 @@ export default function LegalTemplatePicker({
             </div>
           </div>
         )}
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-emerald-50 flex items-center justify-center"><Icon className="w-5 h-5 text-emerald-700" /></div>
-          <div><div className="text-[10px] font-black uppercase tracking-wider text-emerald-700">{selected.group}</div><h3 className="text-lg font-black text-slate-900">{selected.title}</h3></div>
+        <div className="rounded-[22px] border border-slate-200 bg-white p-4 sm:p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center"><Icon className="w-6 h-6 text-blue-800" /></div>
+              <div><div className="text-[10px] font-black uppercase tracking-wider text-blue-700">Thème actif · {selected.group}</div><h3 className="text-lg sm:text-xl font-black text-slate-900">{selected.title}</h3></div>
+            </div>
+            <span className="shrink-0 rounded-full bg-blue-50 px-2.5 py-1 text-[9px] font-black text-blue-700">APPLIQUÉ</span>
+          </div>
+          <p className="mt-2 text-xs sm:text-sm text-slate-500">{selected.description}</p>
         </div>
-        <p className="mt-2 text-xs sm:text-sm text-slate-500">{selected.description}</p>
 
         <form onSubmit={onSubmit} className="mt-4">
           <div className="flex gap-2 overflow-x-auto pb-2">
