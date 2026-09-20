@@ -44,6 +44,7 @@ export default function LegalTemplatePicker({
 }) {
   const selected = LEGAL_TEMPLATES.find((t) => t.id === selectedId) || LEGAL_TEMPLATES[0];
   const Icon = selected.icon;
+  const isTemplateOne = selected.id === "general";
   const groups = ["Particulier", "Urgence", "Entreprise", "Outils"];
 
   return (
@@ -78,6 +79,20 @@ export default function LegalTemplatePicker({
       </div>
 
       <div className="p-4 sm:p-6 bg-gradient-to-b from-slate-50/80 to-white">
+        {isTemplateOne && (
+          <div className="mb-4 overflow-hidden rounded-[22px] bg-gradient-to-br from-[#062b45] via-[#073d5d] to-[#0b6b57] text-white p-5 sm:p-6 relative">
+            <div className="absolute -right-10 -top-10 w-36 h-36 rounded-full bg-white/10" />
+            <div className="relative">
+              <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-2.5 py-1 text-[9px] font-black uppercase tracking-wider">JurisCoach · Côte d'Ivoire</div>
+              <h3 className="mt-3 text-xl sm:text-2xl font-black leading-tight">Votre assistant juridique, simplement.</h3>
+              <p className="mt-1.5 text-xs text-slate-200 max-w-md">Décrivez votre situation. Commencez en texte ou passez en Live avec JurisCoach.</p>
+              <div className="mt-4 flex gap-2">
+                <span className="rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-[10px] font-bold">🇨🇮 Droit ivoirien</span>
+                <span className="rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-[10px] font-bold">🔒 Protégé</span>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-2xl bg-emerald-50 flex items-center justify-center"><Icon className="w-5 h-5 text-emerald-700" /></div>
           <div><div className="text-[10px] font-black uppercase tracking-wider text-emerald-700">{selected.group}</div><h3 className="text-lg font-black text-slate-900">{selected.title}</h3></div>
