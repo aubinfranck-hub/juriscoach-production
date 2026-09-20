@@ -25,6 +25,7 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
   const [challengeMessage, setChallengeMessage] = useState("");
   const [adReady, setAdReady] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
+  const [liveContext, setLiveContext] = useState<{ id: string; title: string; description: string } | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const micStreamRef = useRef<MediaStream | null>(null);
@@ -111,7 +112,7 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
       const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(`${protocol}//${window.location.host}/api/live-ws?ticket=${encodeURIComponent(ticketData.ticket)}`);
       wsRef.current = ws;
-      ws.onopen = () => ws.send(JSON.stringify({ type: "start", mode: liveMode }));
+      ws.onopen = () => ws.send(JSON.stringify({ type: "start", mode: liveMode, legalContext: liveContext?.title || null }));
       ws.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === "connected") setStatus("connected");
@@ -183,7 +184,13 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
     setStatus("disconnected"); setRemaining(null);
   };
 
-  useEffect(() => () => cleanup(), []);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("juriscoach_live_context");
+      if (raw) setLiveContext(JSON.parse(raw));
+    } catch {}
+    return () => cleanup();
+  }, []);
 
   const connected = status === "connected";
   const busy = status === "connecting";
@@ -197,6 +204,7 @@ export default function LiveVoiceScreen({ token, isPro }: { token: string; isPro
             <div className="mt-5 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider"><Sparkles className="w-3.5 h-3.5 text-orange-300" /> Consultation vocale</div>
             <h1 className="mt-3 text-2xl sm:text-4xl font-black tracking-tight">Parlez à JurisCoach.</h1>
             <p className="mt-2 text-sm text-emerald-50/85 max-w-xl">Expliquez votre situation naturellement. L'assistant vous répond à voix haute et affiche simultanément la transcription.</p>
+            {liveContext && <div className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white/10 border border-white/10 px-3 py-2 text-xs font-bold"><Scale className="w-3.5 h-3.5 text-orange-300" /> Parcours : {liveContext.title}</div>}
           </div>
           <div className="rounded-2xl bg-white/10 border border-white/10 p-4 min-w-[190px]">
             <div className="text-[10px] text-emerald-100 uppercase tracking-wider font-bold">Mode</div>
