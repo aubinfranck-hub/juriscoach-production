@@ -333,6 +333,8 @@ async function initDatabase(): Promise<void> {
       challenge_digit SMALLINT NOT NULL,
       challenge_attempts SMALLINT NOT NULL DEFAULT 0,
       challenge_verified BOOLEAN NOT NULL DEFAULT false,
+      ad_started_at TIMESTAMP,
+      ad_completed_at TIMESTAMP,
       status VARCHAR(30) NOT NULL DEFAULT 'ad_pending',
       started_at TIMESTAMP,
       consultation_started_at TIMESTAMP,
@@ -407,6 +409,10 @@ async function initDatabase(): Promise<void> {
   try {
     await pool.query(`ALTER TABLE sponsored_ads ADD COLUMN IF NOT EXISTS advertiser_name VARCHAR(200), ADD COLUMN IF NOT EXISTS campaign_ref VARCHAR(100), ADD COLUMN IF NOT EXISTS price_per_1000_xaf INTEGER NOT NULL DEFAULT 0`);
   } catch (err: any) { console.warn("[DB] Colonnes sponsor annonceur échouées :", err.message); }
+
+  try {
+    await pool.query(`ALTER TABLE sponsored_sessions ADD COLUMN IF NOT EXISTS ad_started_at TIMESTAMP, ADD COLUMN IF NOT EXISTS ad_completed_at TIMESTAMP`);
+  } catch (err: any) { console.warn("[DB] Colonnes suivi écoute sponsor échouées :", err.message); }
 
   try {
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_pro BOOLEAN NOT NULL DEFAULT false`);
@@ -616,7 +622,7 @@ app.post("/api/sponsored/start", requireAuth, async (req:any,res:any) => {
   if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
   const {rows:ads}=await pool.query(
     `SELECT id,title,description,duration_seconds,max_plays_per_user,
-       (SELECT COUNT(*) FROM sponsored_sessions ss WHERE ss.phone=$1 AND ss.ad_id=sponsored_ads.id) AS user_plays
+       (SELECT COUNT(*) FROM sponsored_sessions ss WHERE ss.phone=$1 AND ss.ad_id=sponsored_ads.id AND ss.challenge_verified=true) AS user_plays
      FROM sponsored_ads WHERE active=true ORDER BY priority DESC, random() LIMIT 50`, [req.session.phone]
   );
   const eligibleAds=ads.filter((a:any)=>Number(a.user_plays||0) < Number(a.max_plays_per_user||1));
@@ -631,11 +637,43 @@ app.post("/api/sponsored/start", requireAuth, async (req:any,res:any) => {
   res.json({success:true,sessionId:id,ad,challengeDigit:challenge,audioUrl:`/api/sponsored/ads/${ad.id}/audio`});
 });
 
+app.post("/api/sponsored/ad-start", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body||{};
+  if(!sessionId) return res.status(400).json({success:false,message:"Session requise."});
+  try {
+    const {rows}=await pool.query(
+      `UPDATE sponsored_sessions SET ad_started_at=COALESCE(ad_started_at,CURRENT_TIMESTAMP), status='ad_playing'
+       WHERE id=$1::uuid AND phone=$2 AND ad_completed_at IS NULL
+       RETURNING id`, [sessionId,req.session.phone]);
+    if(!rows.length) return res.status(404).json({success:false,message:"Session sponsorisée introuvable."});
+    res.json({success:true});
+  } catch(err:any){ console.error("[Sponsored] ad-start:",err.message); res.status(500).json({success:false,message:"Erreur interne."}); }
+});
+
+app.post("/api/sponsored/ad-complete", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body||{};
+  if(!sessionId) return res.status(400).json({success:false,message:"Session requise."});
+  try {
+    const {rows}=await pool.query(
+      `UPDATE sponsored_sessions ss SET ad_completed_at=CURRENT_TIMESTAMP,status='ad_listened'
+       FROM sponsored_ads a
+       WHERE ss.id=$1::uuid AND ss.phone=$2 AND ss.ad_id=a.id AND ss.ad_started_at IS NOT NULL
+         AND ss.ad_completed_at IS NULL
+         AND (a.duration_seconds IS NULL OR a.duration_seconds<=0 OR
+              CURRENT_TIMESTAMP >= ss.ad_started_at + make_interval(secs => GREATEST(a.duration_seconds-2,0)))
+       RETURNING ss.id`, [sessionId,req.session.phone]);
+    if(!rows.length) return res.status(409).json({success:false,message:"La durée minimale d'écoute n'est pas encore atteinte."});
+    res.json({success:true});
+  } catch(err:any){ console.error("[Sponsored] ad-complete:",err.message); res.status(500).json({success:false,message:"Erreur interne."}); }
+});
+
 app.post("/api/sponsored/validate", requireAuth, async (req:any,res:any) => {
   if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
   const {sessionId,digit}=req.body || {};
   const {rows}=await pool.query(
-    "SELECT * FROM sponsored_sessions WHERE id=$1 AND phone=$2",[sessionId,req.session.phone]
+    "SELECT * FROM sponsored_sessions WHERE id=$1 AND phone=$2 AND ad_completed_at IS NOT NULL",[sessionId,req.session.phone]
   );
   if(!rows.length) return res.status(404).json({success:false,message:"Session sponsorisée introuvable."});
   const s=rows[0];
