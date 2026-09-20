@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { AlertTriangle, ArrowRight, BriefcaseBusiness, FileText, Home, Loader2, Scale, Search, Send, ShieldAlert, Users } from "lucide-react";
+import { AlertTriangle, FileText, Loader2, Scale } from "lucide-react";
+import LegalTemplatePicker, { LEGAL_TEMPLATES } from "./LegalTemplatePicker";
 
 interface Question { id: number; question: string; field_name: string; type: string; options: string[]; }
 interface ArticleCite { article_number: string; source?: string; title: string; text: string; }
@@ -24,7 +25,7 @@ const proDomains = [
   { title: "Baux commerciaux", text: "Renouvellement, loyer, résiliation", icon: "🏪" },
 ];
 
-export default function DiagnosticScreen({ token }: { token: string }) {
+export default function DiagnosticScreen({ token, onLive }: { token: string; onLive: () => void }) {
   const [stage, setStage] = useState<Stage>("description");
   const [description, setDescription] = useState("");
   const [diagnosticId, setDiagnosticId] = useState<number | null>(null);
@@ -33,6 +34,7 @@ export default function DiagnosticScreen({ token }: { token: string }) {
   const [result, setResult] = useState<DiagnosisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("general");
 
   const handleSubmitDescription = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -66,6 +68,12 @@ export default function DiagnosticScreen({ token }: { token: string }) {
 
   const handleRestart = () => { setStage("description"); setDescription(""); setDiagnosticId(null); setQuestions([]); setAnswers({}); setResult(null); setError(null); };
 
+  const handleTemplateLive = () => {
+    const template = LEGAL_TEMPLATES.find((t) => t.id === selectedTemplateId);
+    if (template) sessionStorage.setItem("juriscoach_live_context", JSON.stringify({ id: template.id, title: template.title, description: template.description }));
+    onLive();
+  };
+
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 py-5 sm:py-8">
       <section className="relative overflow-hidden rounded-[28px] bg-gradient-to-br from-[#063f32] via-[#075c48] to-[#0c7660] p-5 sm:p-8 text-white shadow-xl">
@@ -85,52 +93,15 @@ export default function DiagnosticScreen({ token }: { token: string }) {
         </div>
       </section>
 
-      <section className="mt-5 grid lg:grid-cols-[1.25fr_.75fr] gap-5">
-        <div className="rounded-[24px] bg-white border border-slate-200 shadow-sm p-4 sm:p-6">
-          <div className="flex items-center justify-between mb-4">
-            <div><p className="text-[10px] font-bold uppercase tracking-wider text-emerald-700">Parcours particulier</p><h2 className="text-lg sm:text-xl font-black text-slate-900">Quel est votre besoin ?</h2></div>
-            <div className="w-10 h-10 rounded-2xl bg-orange-50 flex items-center justify-center"><Search className="w-5 h-5 text-orange-500" /></div>
-          </div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            {privateDomains.map((d) => {
-              const Icon = d.icon;
-              return <div key={d.title} className="rounded-2xl border border-slate-200 bg-slate-50 p-3.5 hover:border-emerald-300 transition">
-                <div className="flex items-center gap-2.5"><div className="w-9 h-9 rounded-xl bg-white flex items-center justify-center shadow-sm"><Icon className="w-4.5 h-4.5 text-emerald-700" /></div><div className="font-bold text-sm text-slate-900">{d.title}</div></div>
-                <p className="text-[11px] leading-4 text-slate-500 mt-2">{d.text}</p>
-              </div>;
-            })}
-          </div>
-          <div className="mt-5 border-t border-slate-100 pt-5">
-            <div className="flex items-center gap-2 mb-2"><span className="w-2 h-2 rounded-full bg-orange-500" /><p className="text-sm font-bold text-slate-900">Décrivez maintenant votre situation</p></div>
-            <form onSubmit={handleSubmitDescription} className="space-y-3">
-              <textarea required rows={5} value={description} onChange={(e) => setDescription(e.target.value)}
-                placeholder="Ex. : Mon propriétaire veut changer le cadenas de mon logement parce que j'ai un retard de loyer..."
-                className="w-full bg-slate-50 border border-slate-200 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100 outline-none rounded-2xl px-4 py-3 text-sm text-slate-900 placeholder-slate-400 resize-none" />
-              <button type="submit" disabled={loading} className="w-full flex items-center justify-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white text-sm font-black py-3.5 rounded-2xl cursor-pointer shadow-sm">
-                {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}{loading ? "Analyse..." : "Analyser ma situation"}
-              </button>
-            </form>
-          </div>
-        </div>
-
-        <aside className="space-y-4">
-          <div className="rounded-[24px] bg-slate-900 text-white p-5 shadow-sm">
-            <p className="text-[10px] font-bold uppercase tracking-wider text-orange-400">Professionnel & PME</p>
-            <h3 className="text-lg font-black mt-1">Un parcours dédié aux entreprises</h3>
-            <div className="mt-4 space-y-2">
-              {proDomains.map((d) => <div key={d.title} className="rounded-xl bg-white/5 border border-white/10 p-3 flex gap-3"><span className="text-lg">{d.icon}</span><div><div className="text-xs font-bold">{d.title}</div><div className="text-[10px] text-slate-400 mt-0.5">{d.text}</div></div></div>)}
-            </div>
-          </div>
-          <div className="rounded-[24px] bg-white border border-slate-200 p-5">
-            <p className="text-xs font-black text-slate-900">Ce que JurisCoach peut préparer</p>
-            <div className="mt-3 space-y-2 text-xs text-slate-600">
-              <div className="flex gap-2"><FileText className="w-4 h-4 text-emerald-600 shrink-0" /> Synthèse des faits et points à vérifier</div>
-              <div className="flex gap-2"><Scale className="w-4 h-4 text-emerald-600 shrink-0" /> Qualification et textes disponibles</div>
-              <div className="flex gap-2"><ArrowRight className="w-4 h-4 text-emerald-600 shrink-0" /> Prochaine démarche à envisager</div>
-            </div>
-          </div>
-        </aside>
-      </section>
+      <LegalTemplatePicker
+        selectedId={selectedTemplateId}
+        onSelect={(id) => { setSelectedTemplateId(id); setDescription(""); setError(null); }}
+        description={description}
+        setDescription={setDescription}
+        onSubmit={handleSubmitDescription}
+        onLive={handleTemplateLive}
+        loading={loading}
+      />
 
       {error && <div className="mt-5 bg-red-50 border border-red-200 rounded-2xl p-3 text-xs text-red-700 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{error}</div>}
 
