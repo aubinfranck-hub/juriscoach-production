@@ -337,6 +337,26 @@ async function initDatabase(): Promise<void> {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_sponsored_sessions_phone ON sponsored_sessions(phone, created_at DESC);
+    CREATE TABLE IF NOT EXISTS customer_profiles (
+      phone TEXT PRIMARY KEY, full_name VARCHAR(200), email VARCHAR(200),
+      preferred_channel VARCHAR(30) NOT NULL DEFAULT 'WHATSAPP', tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      notes TEXT, last_contact_at TIMESTAMP, next_followup_at TIMESTAMP,
+      followup_status VARCHAR(30) NOT NULL DEFAULT 'A_FAIRE', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_customer_followup ON customer_profiles(next_followup_at, followup_status);
+    CREATE TABLE IF NOT EXISTS contact_events (
+      id SERIAL PRIMARY KEY, phone TEXT NOT NULL, channel VARCHAR(30) NOT NULL, event_type VARCHAR(50) NOT NULL DEFAULT 'CONTACT',
+      subject VARCHAR(300), notes TEXT, admin_phone TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_contact_events_phone ON contact_events(phone, created_at DESC);
+    CREATE TABLE IF NOT EXISTS crm_campaigns (
+      id SERIAL PRIMARY KEY, name VARCHAR(200) NOT NULL, channel VARCHAR(30) NOT NULL, message TEXT NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'BROUILLON',
+      scheduled_at TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id BIGSERIAL PRIMARY KEY, admin_phone TEXT NOT NULL, action VARCHAR(100) NOT NULL, target VARCHAR(200), details JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
 
     CREATE TABLE IF NOT EXISTS generated_documents (
       id SERIAL PRIMARY KEY,
@@ -650,6 +670,43 @@ app.post("/api/admin/accounts/:phone/reset-password", requireAdminAuth, (req, re
   }
   res.json({ success: true, newPassword });
 });
+// CRM ADMIN
+async function writeAdminAudit(req:any, action:string, target:string|null, details:any = {}) {
+  if (!pool) return;
+  try { await pool.query("INSERT INTO admin_audit_logs (admin_phone,action,target,details) VALUES ($1,$2,$3,$4)", [req.session?.phone || "admin-secret", action, target, details]); } catch {}
+}
+
+app.get("/api/admin/crm/customers", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const q=String(req.query.q||"").trim(); const params:any[]=[]; const where:string[]=[];
+  if(q){ params.push(`%${q}%`); where.push(`(a.phone ILIKE ${params.length} OR COALESCE(c.full_name,'') ILIKE ${params.length} OR COALESCE(c.email,'') ILIKE ${params.length})`); }
+  const sql=`SELECT a.phone,a.created_at AS account_created_at,a.is_pro,a.is_admin,c.full_name,c.email,c.preferred_channel,c.tags,c.notes,c.last_contact_at,c.next_followup_at,c.followup_status,c.updated_at FROM accounts a LEFT JOIN customer_profiles c ON c.phone=a.phone ${where.length?"WHERE "+where.join(" AND "):""} ORDER BY COALESCE(c.next_followup_at, TIMESTAMP '2999-12-31'), a.created_at DESC LIMIT 500`;
+  const {rows}=await pool.query(sql,params); res.json({success:true,customers:rows});
+});
+
+app.patch("/api/admin/crm/customers/:phone", requireAdminAuth, async (req:any,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const phone=normalizePhone(decodeURIComponent(req.params.phone)); const b=req.body||{};
+  await pool.query(`INSERT INTO customer_profiles(phone,full_name,email,preferred_channel,tags,notes,last_contact_at,next_followup_at,followup_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(phone) DO UPDATE SET full_name=$2,email=$3,preferred_channel=$4,tags=$5,notes=$6,last_contact_at=$7,next_followup_at=$8,followup_status=$9,updated_at=CURRENT_TIMESTAMP`,[phone,b.fullName?String(b.fullName).slice(0,200):null,b.email?String(b.email).slice(0,200):null,String(b.preferredChannel||"WHATSAPP").slice(0,30),Array.isArray(b.tags)?b.tags.map((x:any)=>String(x).slice(0,40)).slice(0,20):[],b.notes?String(b.notes).slice(0,5000):null,b.lastContactAt||null,b.nextFollowupAt||null,String(b.followupStatus||"A_FAIRE").slice(0,30)]);
+  await writeAdminAudit(req,"CRM_UPDATE",phone,{fields:Object.keys(b)}); res.json({success:true});
+});
+
+app.post("/api/admin/crm/contact", requireAdminAuth, async (req:any,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const b=req.body||{}; const phone=normalizePhone(b.phone); if(!phone)return res.status(400).json({success:false,message:"Téléphone requis."});
+  await pool.query("INSERT INTO contact_events(phone,channel,event_type,subject,notes,admin_phone) VALUES($1,$2,$3,$4,$5,$6)",[phone,String(b.channel||"WHATSAPP").slice(0,30),String(b.eventType||"CONTACT").slice(0,50),b.subject?String(b.subject).slice(0,300):null,b.notes?String(b.notes).slice(0,5000):null,req.session?.phone||"admin-secret"]);
+  await pool.query("INSERT INTO customer_profiles(phone,last_contact_at,followup_status) VALUES($1,CURRENT_TIMESTAMP,'FAIT') ON CONFLICT(phone) DO UPDATE SET last_contact_at=CURRENT_TIMESTAMP,followup_status='FAIT',updated_at=CURRENT_TIMESTAMP",[phone]);
+  await writeAdminAudit(req,"CRM_CONTACT",phone,{channel:b.channel||"WHATSAPP",eventType:b.eventType||"CONTACT"}); res.json({success:true});
+});
+
+app.get("/api/admin/crm/contacts/:phone", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const phone=normalizePhone(decodeURIComponent(req.params.phone)); const {rows}=await pool.query("SELECT id,channel,event_type,subject,notes,admin_phone,created_at FROM contact_events WHERE phone=$1 ORDER BY created_at DESC LIMIT 100",[phone]); res.json({success:true,events:rows});
+});
+app.get("/api/admin/crm/campaigns", requireAdminAuth, async (req,res) => { if(!pool)return res.status(503).json({success:false,message:"Service indisponible."}); const {rows}=await pool.query("SELECT * FROM crm_campaigns ORDER BY created_at DESC LIMIT 100"); res.json({success:true,campaigns:rows}); });
+app.post("/api/admin/crm/campaigns", requireAdminAuth, async (req:any,res) => { if(!pool)return res.status(503).json({success:false,message:"Service indisponible."}); const b=req.body||{}; if(!b.name||!b.message)return res.status(400).json({success:false,message:"Nom et message requis."}); const {rows}=await pool.query("INSERT INTO crm_campaigns(name,channel,message,status,scheduled_at) VALUES($1,$2,$3,$4,$5) RETURNING *",[String(b.name).slice(0,200),String(b.channel||"WHATSAPP").slice(0,30),String(b.message).slice(0,10000),String(b.status||"BROUILLON").slice(0,30),b.scheduledAt||null]); await writeAdminAudit(req,"CAMPAIGN_CREATE",String(rows[0].id),{name:b.name,channel:b.channel}); res.status(201).json({success:true,campaign:rows[0]}); });
+app.get("/api/admin/crm/audit", requireAdminAuth, async (req,res) => { if(!pool)return res.status(503).json({success:false,message:"Service indisponible."}); const {rows}=await pool.query("SELECT id,admin_phone,action,target,details,created_at FROM admin_audit_logs ORDER BY created_at DESC LIMIT 200"); res.json({success:true,logs:rows}); });
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // MOTEUR JURIDIQUE — diagnostic pénal, recherche, dossiers, documents
