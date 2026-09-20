@@ -370,9 +370,10 @@ export default function AdminPanel({ token }: { token: string }) {
           </div>
           <input id="juriscoach-ad-file" required type="file" accept="audio/*" onChange={e=>setAdFile(e.target.files?.[0] || null)}
             className="w-full text-xs text-slate-400"/>
-          <div className="grid grid-cols-2 gap-2">
-            <input type="number" min="0" max="1000" 
-            <input type="number" min="1" max="100" 
+          <div className="grid grid-cols-3 gap-2">
+            <input type="number" min="0" value={adPrice1000} onChange={e=>setAdPrice1000(e.target.value)} placeholder="Prix / 1000 écoutes (FCFA)" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+            <input type="number" min="0" max="1000" value={adPriority} onChange={e=>setAdPriority(e.target.value)} placeholder="Priorité" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
+            <input type="number" min="1" max="100" value={adMaxPlays} onChange={e=>setAdMaxPlays(e.target.value)} placeholder="Max/user" className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/>
           </div>
           <button disabled={adUploading} className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold py-2.5 rounded-xl">
             <Volume2 className="w-3.5 h-3.5 inline mr-1"/> {adUploading ? "Envoi..." : "Ajouter la publicité audio"}
