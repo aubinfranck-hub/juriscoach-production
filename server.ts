@@ -2637,7 +2637,7 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
                 },
               },
               callbacks: {
-                onmessage: (msg: any) => {
+                onmessage: async (msg: any) => {
                   if (isClosed) return;
                   const modelParts = msg.serverContent?.modelTurn?.parts;
                   if (modelParts && Array.isArray(modelParts)) {
