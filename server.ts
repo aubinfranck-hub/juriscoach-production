@@ -886,6 +886,8 @@ app.post("/api/dossiers/:id/chronology", requireAuth, resolveUserId, async (req:
 });
 
 app.get("/api/dossiers/:id/chronology", requireAuth, async (req: any, res) => {
+  const owner = await pool!.query("SELECT id FROM dossiers WHERE id = $1 AND user_id = $2", [req.params.id, req.user.userId]);
+  if (owner.rows.length === 0) return res.status(404).json({ success: false, message: "Dossier introuvable." });
   const result = await pool!.query("SELECT id, event_date, event_type, description, importance, created_at FROM dossier_chronology WHERE dossier_id = $1 ORDER BY event_date DESC", [req.params.id]);
   res.json({ success: true, chronology: result.rows });
 });
@@ -1832,13 +1834,14 @@ Produis un document professionnel en HTML prêt à être converti. N'invente pas
 });
 
 app.get("/api/documents/:id", requireAuth, async (req: any, res) => {
-  const result = await pool!.query("SELECT * FROM generated_documents WHERE id = $1", [req.params.id]);
+  const result = await pool!.query("SELECT gd.* FROM generated_documents gd JOIN dossiers d ON d.id = gd.dossier_id WHERE gd.id = $1 AND d.user_id = $2", [req.params.id, req.user.userId]);
   if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Document introuvable." });
   res.json({ success: true, ...result.rows[0] });
 });
 
 app.delete("/api/documents/:id", requireAuth, async (req: any, res) => {
-  await pool!.query("DELETE FROM generated_documents WHERE id = $1", [req.params.id]);
+  const result = await pool!.query("DELETE FROM generated_documents gd USING dossiers d WHERE gd.id = $1 AND gd.dossier_id = d.id AND d.user_id = $2 RETURNING gd.id", [req.params.id, req.user.userId]);
+  if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Document introuvable." });
   res.json({ success: true, message: "Document supprimé." });
 });
 
