@@ -328,6 +328,7 @@ async function initDatabase(): Promise<void> {
       phone TEXT NOT NULL,
       ad_id INTEGER REFERENCES sponsored_ads(id) ON DELETE SET NULL,
       challenge_digit SMALLINT NOT NULL,
+      challenge_attempts SMALLINT NOT NULL DEFAULT 0,
       challenge_verified BOOLEAN NOT NULL DEFAULT false,
       status VARCHAR(30) NOT NULL DEFAULT 'ad_pending',
       started_at TIMESTAMP,
@@ -394,6 +395,12 @@ async function initDatabase(): Promise<void> {
   }
 
   // Ajoute is_pro aux comptes déjà existants (créés avant l'introduction du statut Pro).
+  try {
+    await pool.query(`ALTER TABLE sponsored_sessions ADD COLUMN IF NOT EXISTS challenge_attempts SMALLINT NOT NULL DEFAULT 0`);
+  } catch (err: any) {
+    console.warn("[DB] Ajout de challenge_attempts échoué :", err.message);
+  }
+
   try {
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_pro BOOLEAN NOT NULL DEFAULT false`);
   } catch (err: any) {
@@ -575,10 +582,13 @@ app.get("/api/sponsored/ads/:id/audio", async (req,res) => {
 app.post("/api/sponsored/start", requireAuth, async (req:any,res:any) => {
   if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
   const {rows:ads}=await pool.query(
-    `SELECT id,title,description,duration_seconds FROM sponsored_ads WHERE active=true ORDER BY priority DESC, random() LIMIT 10`
+    `SELECT id,title,description,duration_seconds,max_plays_per_user,
+       (SELECT COUNT(*) FROM sponsored_sessions ss WHERE ss.phone=$1 AND ss.ad_id=sponsored_ads.id) AS user_plays
+     FROM sponsored_ads WHERE active=true ORDER BY priority DESC, random() LIMIT 50`, [req.session.phone]
   );
-  if(!ads.length) return res.status(503).json({success:false,message:"Aucune publicité sponsorisée disponible pour le moment."});
-  const ad=ads[Math.floor(Math.random()*ads.length)];
+  const eligibleAds=ads.filter((a:any)=>Number(a.user_plays||0) < Number(a.max_plays_per_user||1));
+  if(!eligibleAds.length) return res.status(503).json({success:false,message:"Aucune publicité sponsorisée disponible pour ce compte pour le moment."});
+  const ad=eligibleAds[Math.floor(Math.random()*eligibleAds.length)];
   const challenge=Math.floor(Math.random()*10);
   const id=crypto.randomUUID();
   await pool.query(
@@ -597,7 +607,12 @@ app.post("/api/sponsored/validate", requireAuth, async (req:any,res:any) => {
   if(!rows.length) return res.status(404).json({success:false,message:"Session sponsorisée introuvable."});
   const s=rows[0];
   if(s.challenge_verified) return res.json({success:true,verified:true});
-  if(Number(digit)!==Number(s.challenge_digit)) return res.status(400).json({success:false,verified:false,message:"Réponse incorrecte. Écoutez attentivement la publicité et réessayez."});
+  if(s.status !== 'ad_pending') return res.status(409).json({success:false,verified:false,message:"Cette session n'est plus disponible."});
+  if(Number(digit)!==Number(s.challenge_digit)) {
+    const attempts=Number(s.challenge_attempts||0)+1;
+    await pool.query("UPDATE sponsored_sessions SET challenge_attempts=$2,status=$3 WHERE id=$1 AND phone=$4",[sessionId,attempts,attempts>=5?"expired":"ad_pending",req.session.phone]);
+    return res.status(400).json({success:false,verified:false,attemptsRemaining:Math.max(0,5-attempts),message:attempts>=5?"Trop de tentatives. Recommencez une nouvelle session sponsorisée.":"Réponse incorrecte. Écoutez attentivement la publicité et réessayez."});
+  }
   const start=new Date();
   const end=new Date(start.getTime()+3*60*1000);
   await pool.query(
