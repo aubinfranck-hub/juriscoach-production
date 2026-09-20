@@ -308,6 +308,36 @@ async function initDatabase(): Promise<void> {
       last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS sponsored_ads (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(200) NOT NULL,
+      description TEXT,
+      audio_data BYTEA NOT NULL,
+      mime_type VARCHAR(100) NOT NULL DEFAULT 'audio/mpeg',
+      duration_seconds INTEGER,
+      active BOOLEAN NOT NULL DEFAULT true,
+      priority INTEGER NOT NULL DEFAULT 0,
+      max_plays_per_user INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_sponsored_ads_active ON sponsored_ads(active, priority DESC);
+
+    CREATE TABLE IF NOT EXISTS sponsored_sessions (
+      id UUID PRIMARY KEY,
+      phone TEXT NOT NULL,
+      ad_id INTEGER REFERENCES sponsored_ads(id) ON DELETE SET NULL,
+      challenge_digit SMALLINT NOT NULL,
+      challenge_verified BOOLEAN NOT NULL DEFAULT false,
+      status VARCHAR(30) NOT NULL DEFAULT 'ad_pending',
+      started_at TIMESTAMP,
+      consultation_started_at TIMESTAMP,
+      ends_at TIMESTAMP,
+      completed_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_sponsored_sessions_phone ON sponsored_sessions(phone, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS generated_documents (
       id SERIAL PRIMARY KEY,
       dossier_id INTEGER NOT NULL REFERENCES dossiers(id) ON DELETE CASCADE,
@@ -430,6 +460,152 @@ app.post("/api/auth/login", authLimiter, (req, res) => {
 app.get("/api/user/status", requireAuth, (req: any, res) => {
   const acc = userAccounts.get(req.session.phone);
   res.json({ success: true, phone: req.session.phone, isAdmin: acc?.isAdmin === true, isPro: acc?.isPro === true });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// SPONSORISATION — bibliothèque audio + sessions sponsorisées
+// ═══════════════════════════════════════════════════════════════════════
+app.get("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
+  const { rows } = await pool.query(
+    `SELECT id, title, description, mime_type, duration_seconds, active, priority, max_plays_per_user, created_at, updated_at
+     FROM sponsored_ads ORDER BY active DESC, priority DESC, created_at DESC`
+  );
+  res.json({ success:true, ads:rows });
+});
+
+app.post("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
+  const { title, description, audioBase64, mimeType, durationSeconds, priority, maxPlaysPerUser } = req.body || {};
+  if (!title || !audioBase64) return res.status(400).json({ success:false, message:"Titre et fichier audio requis." });
+  const match = String(audioBase64).match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return res.status(400).json({ success:false, message:"Audio invalide. Utilisez un fichier audio encodé en base64." });
+  const raw = Buffer.from(match[2], "base64");
+  if (raw.length > 12 * 1024 * 1024) return res.status(413).json({ success:false, message:"Audio trop volumineux (12 Mo maximum)." });
+  const mime = String(mimeType || match[1] || "audio/mpeg").slice(0,100);
+  const { rows } = await pool.query(
+    `INSERT INTO sponsored_ads (title, description, audio_data, mime_type, duration_seconds, priority, max_plays_per_user)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, title, description, mime_type, duration_seconds, active, priority, max_plays_per_user, created_at`,
+    [String(title).slice(0,200), description ? String(description).slice(0,2000) : null, raw, mime,
+     Number.isFinite(Number(durationSeconds)) ? Math.max(0, Math.min(3600, Number(durationSeconds))) : null,
+     Number.isFinite(Number(priority)) ? Math.max(0, Math.min(1000, Number(priority))) : 0,
+     Number.isFinite(Number(maxPlaysPerUser)) ? Math.max(1, Math.min(100, Number(maxPlaysPerUser))) : 1]
+  );
+  res.status(201).json({ success:true, ad:rows[0] });
+});
+
+app.patch("/api/admin/sponsored-ads/:id", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
+  const id = Number(req.params.id);
+  const { title, description, active, priority, maxPlaysPerUser } = req.body || {};
+  const { rows } = await pool.query(
+    `UPDATE sponsored_ads SET
+      title=COALESCE($2,title), description=COALESCE($3,description), active=COALESCE($4,active),
+      priority=COALESCE($5,priority), max_plays_per_user=COALESCE($6,max_plays_per_user), updated_at=CURRENT_TIMESTAMP
+     WHERE id=$1 RETURNING id,title,description,mime_type,duration_seconds,active,priority,max_plays_per_user,created_at,updated_at`,
+    [id, title ? String(title).slice(0,200) : null, description === undefined ? null : String(description).slice(0,2000),
+     typeof active === "boolean" ? active : null,
+     priority === undefined ? null : Math.max(0, Math.min(1000, Number(priority))),
+     maxPlaysPerUser === undefined ? null : Math.max(1, Math.min(100, Number(maxPlaysPerUser)))]
+  );
+  if (!rows.length) return res.status(404).json({success:false,message:"Publicité introuvable."});
+  res.json({success:true,ad:rows[0]});
+});
+
+app.delete("/api/admin/sponsored-ads/:id", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rowCount}=await pool.query("DELETE FROM sponsored_ads WHERE id=$1",[Number(req.params.id)]);
+  if(!rowCount) return res.status(404).json({success:false,message:"Publicité introuvable."});
+  res.json({success:true});
+});
+
+app.get("/api/admin/sponsored-sessions", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows}=await pool.query(
+    `SELECT s.id,s.phone,s.status,s.challenge_verified,s.started_at,s.consultation_started_at,s.ends_at,s.completed_at,s.created_at,
+            a.title AS ad_title
+     FROM sponsored_sessions s LEFT JOIN sponsored_ads a ON a.id=s.ad_id
+     ORDER BY s.created_at DESC LIMIT 200`
+  );
+  res.json({success:true,sessions:rows});
+});
+
+app.get("/api/admin/sponsored-stats", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows}=await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM sponsored_ads WHERE active) AS active_ads,
+      (SELECT COUNT(*) FROM sponsored_sessions) AS total_sessions,
+      (SELECT COUNT(*) FROM sponsored_sessions WHERE challenge_verified) AS verified_sessions,
+      (SELECT COUNT(*) FROM sponsored_sessions WHERE status='completed') AS completed_sessions,
+      (SELECT COUNT(*) FROM sponsored_sessions WHERE status='consulting' AND ends_at > CURRENT_TIMESTAMP) AS active_consultations
+  `);
+  res.json({success:true,stats:rows[0]});
+});
+
+app.get("/api/sponsored/ads/:id/audio", async (req,res) => {
+  if (!pool) return res.status(503).end();
+  const {rows}=await pool.query("SELECT audio_data,mime_type FROM sponsored_ads WHERE id=$1 AND active=true",[Number(req.params.id)]);
+  if(!rows.length) return res.status(404).end();
+  res.setHeader("Content-Type",rows[0].mime_type || "audio/mpeg");
+  res.setHeader("Cache-Control","private, max-age=300");
+  res.send(rows[0].audio_data);
+});
+
+app.post("/api/sponsored/start", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows:ads}=await pool.query(
+    `SELECT id,title,description,duration_seconds FROM sponsored_ads WHERE active=true ORDER BY priority DESC, random() LIMIT 10`
+  );
+  if(!ads.length) return res.status(503).json({success:false,message:"Aucune publicité sponsorisée disponible pour le moment."});
+  const ad=ads[Math.floor(Math.random()*ads.length)];
+  const challenge=Math.floor(Math.random()*10);
+  const id=crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO sponsored_sessions (id,phone,ad_id,challenge_digit,status) VALUES ($1,$2,$3,$4,'ad_pending')`,
+    [id,req.session.phone,ad.id,challenge]
+  );
+  res.json({success:true,sessionId:id,ad,challengeDigit:challenge,audioUrl:`/api/sponsored/ads/${ad.id}/audio`});
+});
+
+app.post("/api/sponsored/validate", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId,digit}=req.body || {};
+  const {rows}=await pool.query(
+    "SELECT * FROM sponsored_sessions WHERE id=$1 AND phone=$2",[sessionId,req.session.phone]
+  );
+  if(!rows.length) return res.status(404).json({success:false,message:"Session sponsorisée introuvable."});
+  const s=rows[0];
+  if(s.challenge_verified) return res.json({success:true,verified:true});
+  if(Number(digit)!==Number(s.challenge_digit)) return res.status(400).json({success:false,verified:false,message:"Réponse incorrecte. Écoutez attentivement la publicité et réessayez."});
+  const start=new Date();
+  const end=new Date(start.getTime()+3*60*1000);
+  await pool.query(
+    "UPDATE sponsored_sessions SET challenge_verified=true,status='ready',started_at=$2 WHERE id=$1 AND phone=$3",
+    [sessionId,start,req.session.phone]
+  );
+  res.json({success:true,verified:true,consultationDurationSeconds:180,startsOnFirstQuestion:true,endsAt:end.toISOString()});
+});
+
+app.post("/api/sponsored/consultation-start", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body || {};
+  const {rows}=await pool.query("SELECT * FROM sponsored_sessions WHERE id=$1 AND phone=$2",[sessionId,req.session.phone]);
+  if(!rows.length) return res.status(404).json({success:false,message:"Session introuvable."});
+  const s=rows[0];
+  if(!s.challenge_verified) return res.status(403).json({success:false,message:"Publicité non validée."});
+  if(s.status==='consulting' && s.ends_at > new Date()) return res.json({success:true,alreadyStarted:true,endsAt:s.ends_at});
+  const now=new Date();
+  const end=new Date(now.getTime()+180000);
+  await pool.query("UPDATE sponsored_sessions SET status='consulting',consultation_started_at=$2,ends_at=$3 WHERE id=$1 AND phone=$4",[sessionId,now,end,req.session.phone]);
+  res.json({success:true,endsAt:end.toISOString(),durationSeconds:180});
+});
+
+app.post("/api/sponsored/complete", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body || {};
+  await pool.query("UPDATE sponsored_sessions SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND phone=$2",[sessionId,req.session.phone]);
+  res.json({success:true});
 });
 
 app.post("/api/admin/toggle-pro", requireAdminAuth, async (req, res) => {
@@ -2314,14 +2490,24 @@ app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) =>
       );
     } catch (e: any) { console.error("[LiveMemory] Erreur sauvegarde:", e.message); }
   }
-  const liveWsTickets = new Map<string, { phone: string; expiresAt: number }>();
+  const liveWsTickets = new Map<string, { phone: string; expiresAt: number; mode: "pro" | "sponsored"; sessionId?: string }>();
   const wss = new WebSocketServer({ noServer: true });
   // Ticket Live à usage unique : évite d'exposer le bearer token permanent dans l'URL WebSocket.
   app.post("/api/live-ticket", requireAuth, async (req: any, res: any) => {
+    const mode = req.body?.mode === "sponsored" ? "sponsored" : "pro";
     const acc = userAccounts.get(req.session.phone);
-    if (!acc?.isPro) return res.status(403).json({ success: false, message: "Fonctionnalité réservée aux comptes Pro." });
+    if (mode === "pro" && !acc?.isPro) return res.status(403).json({ success: false, message: "Fonctionnalité réservée aux comptes Pro." });
+    if (mode === "sponsored" && pool) {
+      const sessionId = String(req.body?.sessionId || "");
+      const { rows } = await pool.query(
+        "SELECT status, challenge_verified, ends_at FROM sponsored_sessions WHERE id=$1 AND phone=$2",
+        [sessionId, req.session.phone]
+      );
+      if (!rows.length || !rows[0].challenge_verified) return res.status(403).json({success:false,message:"Validez d'abord la publicité sponsorisée."});
+      if (rows[0].status === "consulting" && rows[0].ends_at && new Date(rows[0].ends_at).getTime() <= Date.now()) return res.status(403).json({success:false,message:"La session sponsorisée est expirée."});
+    }
     const ticket = crypto.randomBytes(24).toString("hex");
-    liveWsTickets.set(ticket, { phone: req.session.phone, expiresAt: Date.now() + 60 * 1000 });
+    liveWsTickets.set(ticket, { phone: req.session.phone, expiresAt: Date.now() + 60 * 1000, mode, sessionId: mode === "sponsored" ? String(req.body?.sessionId || "") : undefined } as any);
     res.json({ success: true, ticket });
   });
 
@@ -2338,14 +2524,28 @@ app.get("/api/admin/scrape-loidici/codes", requireAdminAuth, async (req, res) =>
       liveWsTickets.delete(ticket);
       const session = { phone: ticketData.phone, createdAt: Date.now() };
       const acc = userAccounts.get(session.phone);
-      if (!acc?.isPro) {
+      const mode = ticketData.mode;
+      if (mode === "pro" && !acc?.isPro) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
       }
+      if (mode === "sponsored" && ticketData.sessionId && pool) {
+        const { rows } = await pool.query(
+          "SELECT status, consultation_started_at, ends_at FROM sponsored_sessions WHERE id=$1 AND phone=$2 AND challenge_verified=true",
+          [ticketData.sessionId, session.phone]
+        );
+        if (!rows.length || rows[0].status !== "consulting" || !rows[0].ends_at || new Date(rows[0].ends_at).getTime() <= Date.now()) {
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         // Attacher phone à la connexion pour la mémoire
         (ws as any).__phone = session.phone;
+        (ws as any).__mode = mode;
+        (ws as any).__sponsoredSessionId = ticketData.sessionId;
         wss.emit("connection", ws, request);
       });
     }
