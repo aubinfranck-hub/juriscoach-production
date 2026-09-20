@@ -400,7 +400,47 @@ export default function AdminPanel({ token }: { token: string }) {
           {adResult && <p className="text-xs text-slate-400">{adResult}</p>}
         </form>
 
-        {sponsorReport && <div className="bg-slate-950 border border-sky-800 rounded-xl p-4 space-y-2"><div className="flex justify-between"><b className="text-sm text-white">Rapport campagne — {sponsorReport.summary?.title}</b><button onClick={()=>setSponsorReport(null)} className="text-xs text-slate-500">Fermer</button></div><div className="grid grid-cols-2 sm:grid-cols-5 gap-2">{[["Écoutes confirmées",sponsorReport.summary?.confirmed_listens],["Sessions",sponsorReport.summary?.sessions],["Terminées",sponsorReport.summary?.completed_sessions],["Numéros uniques",sponsorReport.summary?.unique_phones],["Facturation FCFA",Number(sponsorReport.summary?.billable_plays||0)/1000*Number(sponsorReport.summary?.price_per_1000_xaf||0)].map(([l,v])=><div className="bg-slate-900 rounded-lg p-2 text-center" key={String(l)}><b className="text-sky-400 text-sm">{typeof v==="number"?Math.round(v):v}</b><div className="text-[9px] text-slate-500">{l}</div></div>)}</div><div className="max-h-48 overflow-auto">{(sponsorReport.details||[]).map((d:any)=><div key={d.id} className="text-[10px] text-slate-500 border-b border-slate-800 py-1.5"><span className="font-mono text-white">{d.phone}</span> • {d.challenge_verified?"ÉCOUTE CONFIRMÉE":"Non confirmée"} • {d.status} • {new Date(d.created_at).toLocaleString("fr-FR")}</div>)}</div></div>}
+        {sponsorReport && (
+          <div className="bg-slate-950 border border-sky-800 rounded-xl p-4 space-y-2">
+            <div className="flex justify-between">
+              <b className="text-sm text-white">Rapport campagne — {sponsorReport.summary?.title}</b>
+              <button onClick={() => setSponsorReport(null)} className="text-xs text-slate-500">Fermer</button>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {[
+                ["Écoutes confirmées", sponsorReport.summary?.confirmed_listens],
+                ["Sessions", sponsorReport.summary?.sessions],
+                ["Terminées", sponsorReport.summary?.completed_sessions],
+                ["Numéros uniques", sponsorReport.summary?.unique_phones],
+                [
+                  "Facturation FCFA",
+                  (Number(sponsorReport.summary?.billable_plays || 0) / 1000) *
+                    Number(sponsorReport.summary?.price_per_1000_xaf || 0),
+                ],
+              ].map(([label, value]) => (
+                <div className="bg-slate-900 rounded-lg p-2 text-center" key={String(label)}>
+                  <b className="text-sky-400 text-sm">
+                    {typeof value === "number" ? Math.round(value) : value}
+                  </b>
+                  <div className="text-[9px] text-slate-500">{label}</div>
+                </div>
+              ))}
+            </div>
+            <div className="max-h-48 overflow-auto">
+              {(sponsorReport.details || []).map((detail: any) => (
+                <div key={detail.id} className="text-[10px] text-slate-500 border-b border-slate-800 py-1.5">
+                  <span className="font-mono text-white">{detail.phone}</span>
+                  {" • "}
+                  {detail.challenge_verified ? "ÉCOUTE CONFIRMÉE" : "Non confirmée"}
+                  {" • "}
+                  {detail.status}
+                  {" • "}
+                  {new Date(detail.created_at).toLocaleString("fr-FR")}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="space-y-2">
           {sponsoredAds.map(ad => (
             <div key={ad.id} className="bg-slate-950 border border-slate-800 rounded-xl p-3 flex items-center gap-3">
