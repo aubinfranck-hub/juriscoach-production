@@ -34,6 +34,14 @@ export default function AdminPanel({ token }: { token: string }) {
   const [adFile, setAdFile] = useState<File | null>(null);
   const [adUploading, setAdUploading] = useState(false);
   const [adResult, setAdResult] = useState<string | null>(null);
+  const [crmCustomers, setCrmCustomers] = useState<any[]>([]);
+  const [crmSearch, setCrmSearch] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<any | null>(null);
+  const [crmEvents, setCrmEvents] = useState<any[]>([]);
+  const [crmNote, setCrmNote] = useState("");
+  const [crmFollowup, setCrmFollowup] = useState("");
+  const [crmStatus, setCrmStatus] = useState("A_FAIRE");
+  const [crmLoading, setCrmLoading] = useState(false);
 
   const [extractText, setExtractText] = useState("");
   const [extractSourceTitle, setExtractSourceTitle] = useState("");
@@ -191,6 +199,13 @@ export default function AdminPanel({ token }: { token: string }) {
     return pwd;
   };
 
+  const loadCrm = useCallback(async () => {
+    setCrmLoading(true);
+    try { const r=await fetch("/api/admin/crm/customers?q="+encodeURIComponent(crmSearch),{headers:{Authorization:`Bearer ${token}`}}); const d=await r.json(); if(d.success)setCrmCustomers(d.customers||[]); } catch {} finally { setCrmLoading(false); }
+  },[token,crmSearch]);
+  const selectCustomer = async (c:any) => { setSelectedCustomer(c); setCrmNote(c.notes||""); setCrmFollowup(c.next_followup_at?String(c.next_followup_at).slice(0,16):""); setCrmStatus(c.followup_status||"A_FAIRE"); try { const r=await fetch("/api/admin/crm/contacts/"+encodeURIComponent(c.phone),{headers:{Authorization:`Bearer ${token}`}}); const d=await r.json(); setCrmEvents(d.events||[]); } catch { setCrmEvents([]); } };
+  const saveCustomerCrm = async () => { if(!selectedCustomer)return; await fetch("/api/admin/crm/customers/"+encodeURIComponent(selectedCustomer.phone),{method:"PATCH",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({notes:crmNote,nextFollowupAt:crmFollowup||null,followupStatus:crmStatus})}); loadCrm(); };
+  const logCustomerContact = async () => { if(!selectedCustomer)return; await fetch("/api/admin/crm/contact",{method:"POST",headers:{"Content-Type":"application/json",Authorization:`Bearer ${token}`},body:JSON.stringify({phone:selectedCustomer.phone,channel:"WHATSAPP",eventType:"RELANCE",subject:"Relance client",notes:crmNote})}); selectCustomer(selectedCustomer); loadCrm(); };
   const loadSponsoredAds = useCallback(async () => {
     try {
       const [adsRes, statsRes] = await Promise.all([
@@ -262,7 +277,7 @@ export default function AdminPanel({ token }: { token: string }) {
     }
   }, [token]);
 
-  useEffect(() => { load(); loadSponsoredAds(); }, [load, loadSponsoredAds]);
+  useEffect(() => { load(); loadSponsoredAds(); loadCrm(); }, [load, loadSponsoredAds, loadCrm]);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -307,6 +322,13 @@ export default function AdminPanel({ token }: { token: string }) {
   return (
     <div className="max-w-2xl mx-auto px-5 py-8 space-y-5">
       <h2 className="text-2xl font-display font-bold text-white">Administration</h2>
+
+      <div className="bg-slate-900 border border-sky-700/50 rounded-2xl p-5 space-y-4">
+        <h3 className="flex items-center gap-2 text-xs uppercase tracking-wider text-sky-400 font-semibold"><Users className="w-4 h-4"/> CRM — clients & relances</h3>
+        <div className="flex gap-2"><input value={crmSearch} onChange={e=>setCrmSearch(e.target.value)} placeholder="Rechercher téléphone, nom ou email..." className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white"/><button onClick={loadCrm} className="bg-sky-700 text-white text-xs px-4 rounded-xl">Actualiser</button></div>
+        <div className="max-h-64 overflow-auto space-y-1.5">{crmLoading?<p className="text-xs text-slate-500">Chargement...</p>:crmCustomers.map(c=><button key={c.phone} onClick={()=>selectCustomer(c)} className={"w-full text-left bg-slate-950 border rounded-xl p-3 "+(selectedCustomer?.phone===c.phone?"border-sky-500":"border-slate-800")}><div className="flex justify-between"><span className="text-xs text-white font-mono">{c.phone}</span><span className="text-[10px] text-sky-400">{c.followup_status||"A_FAIRE"}</span></div><div className="text-xs text-slate-400">{c.full_name||"Client sans nom"}{c.next_followup_at?" • relance "+new Date(c.next_followup_at).toLocaleString("fr-FR"):""}</div></button>)}</div>
+        {selectedCustomer && <div className="border-t border-slate-800 pt-4 space-y-2.5"><div className="text-xs text-white font-semibold">{selectedCustomer.full_name||selectedCustomer.phone}</div><textarea value={crmNote} onChange={e=>setCrmNote(e.target.value)} rows={3} placeholder="Notes CRM..." className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white"/><div className="grid grid-cols-2 gap-2"><input type="datetime-local" value={crmFollowup} onChange={e=>setCrmFollowup(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white"/><select value={crmStatus} onChange={e=>setCrmStatus(e.target.value)} className="bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-xs text-white"><option>A_FAIRE</option><option>FAIT</option><option>ANNULEE</option></select></div><div className="flex gap-2"><button onClick={saveCustomerCrm} className="flex-1 bg-sky-700 text-white text-xs font-bold py-2.5 rounded-xl">Enregistrer</button><button onClick={logCustomerContact} className="flex-1 bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl">Journaliser relance</button></div><div className="max-h-32 overflow-auto space-y-1">{crmEvents.map(e=><div key={e.id} className="text-[10px] text-slate-500 bg-slate-950 rounded-lg p-2">{new Date(e.created_at).toLocaleString("fr-FR")} • {e.channel} • {e.event_type}<br/>{e.notes||e.subject||""}</div>)}</div></div>}
+      </div>
 
       <div className="bg-slate-900 border border-amber-600/50 rounded-2xl p-5 space-y-4">
         <h3 className="flex items-center gap-2 text-xs uppercase tracking-wider text-amber-400 font-semibold">
