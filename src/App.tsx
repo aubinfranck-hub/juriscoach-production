@@ -27,7 +27,11 @@ export default function App() {
     setSessionToken(token);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const token = sessionToken;
+    try {
+      if (token) await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+    } catch {}
     localStorage.removeItem("juriscoach_token");
     setSessionToken(null);
   };
