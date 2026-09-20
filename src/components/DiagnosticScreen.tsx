@@ -34,7 +34,7 @@ export default function DiagnosticScreen({ token, onLive }: { token: string; onL
   const [result, setResult] = useState<DiagnosisResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTemplateId, setSelectedTemplateId] = useState("general");
+  const [selectedTemplateId, setSelectedTemplateId] = useState("accueil");
 
   const handleSubmitDescription = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,7 +43,7 @@ export default function DiagnosticScreen({ token, onLive }: { token: string; onL
     try {
       const res = await fetch("/api/diagnostic/penal", {
         method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ description }),
+        body: JSON.stringify({ description, template_id: selectedTemplateId, template_title: LEGAL_TEMPLATES.find((t) => t.id === selectedTemplateId)?.title }),
       });
       const data = await res.json();
       if (!data.success) { setError(data.message || "Échec."); return; }
