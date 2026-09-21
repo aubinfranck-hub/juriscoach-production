@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { AlertTriangle, FileText, Loader2, Scale } from "lucide-react";
+import { AlertTriangle, FileText, Loader2, Scale, Home, BriefcaseBusiness, Users, ShieldAlert } from "lucide-react";
 import LegalTemplatePicker, { LEGAL_TEMPLATES } from "./LegalTemplatePicker";
 
 interface Question { id: number; question: string; field_name: string; type: string; options: string[]; }
