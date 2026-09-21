@@ -1479,7 +1479,7 @@ app.post("/api/travail/dossiers/:id/events", requireAuth, resolveUserId, async (
   const c=await getOwnedLaborCase(req,Number(req.params.id));
   if(!c) return res.status(404).json({success:false,message:"Dossier travail introuvable."});
   const b=req.body||{}; const status=String(b.status||"").trim();
-  if(!LABOR_STEPS.includes(status)||!b.title||!b.event_date) return res.status(400).json({success:false,message:"Étape, titre et date sont requis."});
+  if(!["BROUILLON","PREPARATION"].includes(status)||!b.title||!b.event_date) return res.status(400).json({success:false,message:"Pour un utilisateur, seules les étapes de préparation sont modifiables. Les étapes institutionnelles sont réservées au circuit validé par le Tribunal."});
   await pool!.query(
     `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
      VALUES($1,$2,$3,$4,$5,'UTILISATEUR',$6)`,
