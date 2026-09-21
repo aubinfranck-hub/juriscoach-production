@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
-import { LogOut, ShieldCheck, Radio, Scale, Sparkles } from "lucide-react";
+import { LogOut, ShieldCheck, Radio, Scale, BookOpen } from "lucide-react";
 import LoginScreen from "./components/LoginScreen";
 import AdminPanel from "./components/AdminPanel";
 import DiagnosticScreen from "./components/DiagnosticScreen";
 import LiveVoiceScreen from "./components/LiveVoiceScreen";
+import WorkCodePanel from "./components/WorkCodePanel";
 
 function JurisLogo({ compact = false }: { compact?: boolean }) {
   return (
@@ -29,7 +30,7 @@ export default function App() {
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem("juriscoach_token"));
   const [isAdmin, setIsAdmin] = useState(false);
   const [isPro, setIsPro] = useState(false);
-  const [activeTab, setActiveTab] = useState<"accueil" | "admin" | "live">("accueil");
+  const [activeTab, setActiveTab] = useState<"accueil" | "admin" | "live" | "code-travail">("accueil");
 
   useEffect(() => {
     if (!sessionToken) return;
@@ -74,6 +75,14 @@ export default function App() {
             >
               <Radio className="w-3.5 h-3.5" /> Live {!isPro && <span className="text-[10px]">GRATUIT*</span>}
             </button>
+            <button
+              onClick={() => setActiveTab(activeTab === "code-travail" ? "accueil" : "code-travail")}
+              className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2.5 rounded-xl cursor-pointer transition ${
+                activeTab === "code-travail" ? "bg-emerald-700 text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" /> Code du travail
+            </button>
             {isAdmin && (
               <button onClick={() => setActiveTab(activeTab === "admin" ? "accueil" : "admin")}
                 className="flex items-center gap-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 px-3 py-2.5 rounded-xl cursor-pointer">
@@ -92,6 +101,8 @@ export default function App() {
           <AdminPanel token={sessionToken} />
         ) : activeTab === "live" ? (
           <LiveVoiceScreen token={sessionToken} isPro={isPro} />
+        ) : activeTab === "code-travail" ? (
+          <WorkCodePanel />
         ) : (
           <DiagnosticScreen token={sessionToken} onLive={() => setActiveTab("live")} />
         )}

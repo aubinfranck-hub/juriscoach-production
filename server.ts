@@ -7,6 +7,7 @@ import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity } from "@google/genai";
 import pdfParse from "pdf-parse";
+import { searchWorkCode, workCodeStatus, WORK_CODE_SOURCE } from "./server/workCode";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -451,6 +452,22 @@ async function initDatabase(): Promise<void> {
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean) : true }));
 app.use(express.json({ limit: "15mb" }));
+
+app.get("/api/legal/work-code/status", requireAuth, async (req, res) => {
+  const status = await workCodeStatus();
+  res.json({ success: true, source: WORK_CODE_SOURCE, ...status });
+});
+
+app.get("/api/legal/work-code/search", requireAuth, async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) return res.status(400).json({ success: false, message: "Recherche trop courte (2 caractères min)." });
+  try {
+    const result = await searchWorkCode(q, Number(req.query.limit) || 20);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    res.status(503).json({ success: false, message: "Référentiel du Code du Travail indisponible.", detail: error?.message });
+  }
+});
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", app: "juriscoach" });
