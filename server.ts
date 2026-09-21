@@ -1410,12 +1410,12 @@ const LABOR_PREPARATION_STEPS = ["BROUILLON","PREPARATION","PRET_A_REVUE"];
 
 async function getOwnedLaborCase(req:any, dossierId:number) {
   const result = await pool!.query(
-    \`SELECT lc.id,lc.dossier_id,lc.employee_name,lc.employee_phone,lc.employee_email,
+    `SELECT lc.id,lc.dossier_id,lc.employee_name,lc.employee_phone,lc.employee_email,
             lc.employer_name,lc.employer_contact,lc.employment_start,lc.employment_end,
             lc.contract_type,lc.dispute_type,lc.current_step,
             d.dossier_number,d.title,d.description,d.created_at,d.updated_at
      FROM labor_cases lc JOIN dossiers d ON d.id=lc.dossier_id
-     WHERE lc.dossier_id=$1 AND d.user_id=$2\`,
+     WHERE lc.dossier_id=$1 AND d.user_id=$2`,
     [dossierId, req.user.userId]
   );
   return result.rows[0] || null;
@@ -1430,21 +1430,21 @@ app.post("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res
   const client=await pool.connect();
   try {
     await client.query("BEGIN");
-    const dossierNumber=\`TRV-\${new Date().getFullYear()}-\${crypto.randomBytes(3).toString("hex").toUpperCase()}\`;
+    const dossierNumber=`TRV-${new Date().getFullYear()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
     const d=await client.query(
-      \`INSERT INTO dossiers(user_id,dossier_number,title,domain,description,client_name,client_phone,client_email,adversary_name,adversary_contact)
-       VALUES($1,$2,$3,'TRAVAIL',$4,$5,$6,$7,$8,$9) RETURNING id,dossier_number\`,
+      `INSERT INTO dossiers(user_id,dossier_number,title,domain,description,client_name,client_phone,client_email,adversary_name,adversary_contact)
+       VALUES($1,$2,$3,'TRAVAIL',$4,$5,$6,$7,$8,$9) RETURNING id,dossier_number`,
       [req.user.userId,dossierNumber,String(b.title).slice(0,300),b.description||null,b.employee_name,b.employee_phone||null,b.employee_email||null,b.employer_name,b.employer_contact||null]
     );
     const dossier=d.rows[0];
     const labor=await client.query(
-      \`INSERT INTO labor_cases(dossier_id,employee_name,employee_phone,employee_email,employer_name,employer_contact,employment_start,employment_end,contract_type,dispute_type,current_step)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'BROUILLON') RETURNING id\`,
+      `INSERT INTO labor_cases(dossier_id,employee_name,employee_phone,employee_email,employer_name,employer_contact,employment_start,employment_end,contract_type,dispute_type,current_step)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'BROUILLON') RETURNING id`,
       [dossier.id,b.employee_name,b.employee_phone||null,b.employee_email||null,b.employer_name,b.employer_contact||null,b.employment_start||null,b.employment_end||null,b.contract_type||null,b.dispute_type||null]
     );
     await client.query(
-      \`INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
-       VALUES($1,'BROUILLON','Dossier créé','Préparation initiale du dossier dans JurisCoach.',CURRENT_DATE,'UTILISATEUR',$2)\`,
+      `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+       VALUES($1,'BROUILLON','Dossier créé','Préparation initiale du dossier dans JurisCoach.',CURRENT_DATE,'UTILISATEUR',$2)`,
       [labor.rows[0].id,req.user.userId]
     );
     await client.query("COMMIT");
@@ -1459,9 +1459,9 @@ app.post("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res
 app.get("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res:any) => {
   if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
   const {rows}=await pool.query(
-    \`SELECT lc.id,lc.dossier_id,d.dossier_number,d.title,lc.employee_name,lc.employer_name,lc.current_step,lc.created_at
+    `SELECT lc.id,lc.dossier_id,d.dossier_number,d.title,lc.employee_name,lc.employer_name,lc.current_step,lc.created_at
      FROM labor_cases lc JOIN dossiers d ON d.id=lc.dossier_id
-     WHERE d.user_id=$1 ORDER BY lc.created_at DESC LIMIT 100\`,
+     WHERE d.user_id=$1 ORDER BY lc.created_at DESC LIMIT 100`,
     [req.user.userId]
   );
   res.json({success:true,cases:rows});
@@ -1472,8 +1472,8 @@ app.get("/api/travail/dossiers/:id", requireAuth, resolveUserId, async (req:any,
   const c=await getOwnedLaborCase(req,Number(req.params.id));
   if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
   const [events,documents]=await Promise.all([
-    pool.query(\`SELECT id,status,title,description,event_date,created_at FROM labor_case_events WHERE labor_case_id=$1 ORDER BY event_date ASC,created_at ASC\`,[c.id]),
-    pool.query(\`SELECT id,document_type,document_name,required,received,mime_type,file_size,uploaded_at FROM labor_case_documents WHERE labor_case_id=$1 ORDER BY uploaded_at DESC\`,[c.id])
+    pool.query(`SELECT id,status,title,description,event_date,created_at FROM labor_case_events WHERE labor_case_id=$1 ORDER BY event_date ASC,created_at ASC`,[c.id]),
+    pool.query(`SELECT id,document_type,document_name,required,received,mime_type,file_size,uploaded_at FROM labor_case_documents WHERE labor_case_id=$1 ORDER BY uploaded_at DESC`,[c.id])
   ]);
   res.json({success:true,...c,events:events.rows,documents:documents.rows});
 });
@@ -1487,14 +1487,14 @@ app.post("/api/travail/dossiers/:id/events", requireAuth, resolveUserId, async (
   if(!title||!b.event_date) return res.status(400).json({success:false,message:"Titre et date de l'événement requis."});
   const status=c.current_step==="BROUILLON"?"BROUILLON":"PREPARATION";
   await pool!.query(
-    \`INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
-     VALUES($1,$2,$3,$4,$5,'UTILISATEUR',$6)\`,
+    `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+     VALUES($1,$2,$3,$4,$5,'UTILISATEUR',$6)`,
     [c.id,status,title.slice(0,250),b.description?String(b.description).slice(0,5000):null,b.event_date,req.user.userId]
   );
   if(c.current_step==="BROUILLON"){
-    await pool!.query(\`UPDATE labor_cases SET current_step='PREPARATION',updated_at=CURRENT_TIMESTAMP WHERE id=$1\`,[c.id]);
+    await pool!.query(`UPDATE labor_cases SET current_step='PREPARATION',updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
   } else {
-    await pool!.query(\`UPDATE labor_cases SET updated_at=CURRENT_TIMESTAMP WHERE id=$1\`,[c.id]);
+    await pool!.query(`UPDATE labor_cases SET updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
   }
   res.status(201).json({success:true});
 });
@@ -1512,11 +1512,11 @@ app.post("/api/travail/dossiers/:id/documents", requireAuth, resolveUserId, asyn
     if(data.length>10*1024*1024) return res.status(413).json({success:false,message:"Fichier trop volumineux (10 Mo maximum)."});
   }
   const {rows}=await pool!.query(
-    \`INSERT INTO labor_case_documents(labor_case_id,document_type,document_name,required,received,file_data,mime_type,file_size)
-     VALUES($1,$2,$3,$4,true,$5,$6,$7) RETURNING id\`,
+    `INSERT INTO labor_case_documents(labor_case_id,document_type,document_name,required,received,file_data,mime_type,file_size)
+     VALUES($1,$2,$3,$4,true,$5,$6,$7) RETURNING id`,
     [c.id,String(b.document_type).slice(0,100),String(b.document_name).slice(0,300),b.required===true,data,b.mime_type?String(b.mime_type).slice(0,120):null,data?.length||Number(b.file_size)||null]
   );
-  await pool!.query(\`UPDATE labor_cases SET current_step=CASE WHEN current_step='BROUILLON' THEN 'PREPARATION' ELSE current_step END,updated_at=CURRENT_TIMESTAMP WHERE id=$1\`,[c.id]);
+  await pool!.query(`UPDATE labor_cases SET current_step=CASE WHEN current_step='BROUILLON' THEN 'PREPARATION' ELSE current_step END,updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
   res.status(201).json({success:true,document_id:rows[0].id});
 });
 
@@ -1525,12 +1525,12 @@ app.get("/api/travail/dossiers/:id/documents/:documentId", requireAuth, resolveU
   const c=await getOwnedLaborCase(req,Number(req.params.id));
   if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
   const {rows}=await pool.query(
-    \`SELECT id,document_name,document_type,mime_type,file_size,file_data FROM labor_case_documents WHERE id=$1 AND labor_case_id=$2\`,
+    `SELECT id,document_name,document_type,mime_type,file_size,file_data FROM labor_case_documents WHERE id=$1 AND labor_case_id=$2`,
     [req.params.documentId,c.id]
   );
   if(!rows.length||!rows[0].file_data) return res.status(404).json({success:false,message:"Fichier introuvable."});
   res.setHeader("Content-Type",rows[0].mime_type||"application/octet-stream");
-  res.setHeader("Content-Disposition",\`inline; filename="\${String(rows[0].document_name).replace(/["\\\\]/g,"_")}"\`);
+  res.setHeader("Content-Disposition",`inline; filename="${String(rows[0].document_name).replace(/["\\\\]/g,"_")}"`);
   res.send(rows[0].file_data);
 });
 
@@ -1538,10 +1538,10 @@ app.post("/api/travail/dossiers/:id/prepare", requireAuth, resolveUserId, async 
   if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
   const c=await getOwnedLaborCase(req,Number(req.params.id));
   if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
-  await pool!.query(\`UPDATE labor_cases SET current_step='PRET_A_REVUE',updated_at=CURRENT_TIMESTAMP WHERE id=$1\`,[c.id]);
+  await pool!.query(`UPDATE labor_cases SET current_step='PRET_A_REVUE',updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
   await pool!.query(
-    \`INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
-     VALUES($1,'PRET_A_REVUE','Préparation marquée comme prête','Le dossier est prêt pour une revue par l’utilisateur ou son conseil.',CURRENT_DATE,'UTILISATEUR',$2)\`,
+    `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+     VALUES($1,'PRET_A_REVUE','Préparation marquée comme prête','Le dossier est prêt pour une revue par l’utilisateur ou son conseil.',CURRENT_DATE,'UTILISATEUR',$2)`,
     [c.id,req.user.userId]
   );
   res.json({success:true,current_step:"PRET_A_REVUE"});
