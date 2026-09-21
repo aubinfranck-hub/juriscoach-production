@@ -84,7 +84,7 @@ export default function App() {
             >
               <BookOpen className="w-3.5 h-3.5" /> Code du travail
             </button>
-            <button onClick={() => setActiveTab(activeTab === "dossiers-travail" ? "accueil" : "dossiers-travail")} className={"flex items-center gap-1.5 text-xs font-bold px-3 py-2.5 rounded-xl cursor-pointer transition " + (activeTab === "dossiers-travail" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}><Scale className="w-3.5 h-3.5" /> Dossiers travail</button>
+            <button onClick={() => setActiveTab(activeTab === "dossiers-travail" ? "accueil" : "dossiers-travail")} className={"flex items-center gap-1.5 text-xs font-bold px-3 py-2.5 rounded-xl cursor-pointer transition " + (activeTab === "dossiers-travail" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}><Scale className="w-3.5 h-3.5" /> Préparer un dossier</button>
             {isAdmin && (
               <button onClick={() => setActiveTab(activeTab === "admin" ? "accueil" : "admin")}
                 className="flex items-center gap-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 px-3 py-2.5 rounded-xl cursor-pointer">
