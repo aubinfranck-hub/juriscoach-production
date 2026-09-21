@@ -102,7 +102,7 @@ export default function App() {
         ) : activeTab === "live" ? (
           <LiveVoiceScreen token={sessionToken} isPro={isPro} />
         ) : activeTab === "code-travail" ? (
-          <WorkCodePanel />
+          <WorkCodePanel token={sessionToken} />
         ) : (
           <DiagnosticScreen token={sessionToken} onLive={() => setActiveTab("live")} />
         )}
