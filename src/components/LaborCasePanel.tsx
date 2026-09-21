@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { BriefcaseBusiness, CalendarDays, CheckCircle2, FileText, Loader2, Plus, RefreshCw, Send, Upload } from "lucide-react";
+import { BriefcaseBusiness, CalendarDays, FileText, Plus, RefreshCw, Send, Upload } from "lucide-react";
 
 type CaseRow = {
   id:number; dossier_id:number; dossier_number:string; title:string; employee_name:string;
@@ -142,7 +142,7 @@ export default function LaborCasePanel({token}:{token:string}) {
 
               <div className="grid md:grid-cols-2 gap-4">
                 <form onSubmit={addEvent} className="border border-slate-200 rounded-2xl p-4"><p className="text-xs font-black mb-3">Chronologie / événement</p>
-                  <select value={event.status} onChange={e=>setEvent({...event,status:e.target.value})} className="w-full border rounded-xl px-3 py-2 text-xs mb-2">{STEPS.map(s=><option key={s}>{s}</option>)}</select>
+                  <select value={event.status} onChange={e=>setEvent({...event,status:e.target.value})} className="w-full border rounded-xl px-3 py-2 text-xs mb-2"><option>BROUILLON</option><option>PREPARATION</option></select>
                   <input value={event.title} onChange={e=>setEvent({...event,title:e.target.value})} placeholder="Titre" className="w-full border rounded-xl px-3 py-2 text-xs mb-2"/>
                   <input type="date" value={event.event_date} onChange={e=>setEvent({...event,event_date:e.target.value})} className="w-full border rounded-xl px-3 py-2 text-xs mb-2"/>
                   <textarea value={event.description} onChange={e=>setEvent({...event,description:e.target.value})} placeholder="Description" rows={3} className="w-full border rounded-xl px-3 py-2 text-xs mb-2 resize-none"/>
