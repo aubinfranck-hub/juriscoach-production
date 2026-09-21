@@ -1065,6 +1065,125 @@ app.get("/api/diagnostic/user/history", requireAuth, resolveUserId, async (req: 
   res.json({ success: true, diagnostics: result.rows });
 });
 
+// --- DIAGNOSTIC DROIT DU TRAVAIL ---
+// Module distinct du diagnostic pénal : il s'appuie exclusivement sur le corpus Code du Travail
+// ivoirien chargé par server/workCode.ts et rappelle son statut de référentiel à valider.
+app.post("/api/diagnostic/travail", requireAuth, resolveUserId, async (req: any, res) => {
+  try {
+    const { description, dossier_id } = req.body || {};
+    if (!description || String(description).trim().length < 10) {
+      return res.status(400).json({ success: false, message: "La description doit contenir au moins 10 caractères." });
+    }
+    if (dossier_id) {
+      const owner = await pool!.query("SELECT id FROM dossiers WHERE id = $1 AND user_id = $2", [dossier_id, req.user.userId]);
+      if (!owner.rows.length) return res.status(404).json({ success: false, message: "Dossier introuvable ou accès refusé." });
+    }
+
+    const search = await searchWorkCode(String(description), 8);
+    const context = search.results.map((a: any) => "Article " + a.article + "\n" + a.text.slice(0, 1800)).join("\n\n");
+    const inserted = await pool!.query(
+      `INSERT INTO diagnostic_results (user_id, dossier_id, diagnostic_type, input_description, input_answers, confidence_level)
+       VALUES ($1, $2, 'TRAVAIL', $3, '{}', 'INITIAL') RETURNING id`,
+      [req.user.userId, dossier_id || null, description]
+    );
+
+    const prompt = `Tu es JurisCoach, assistant documentaire en droit du travail ivoirien.
+Situation de l'utilisateur :
+"${description}"
+
+Extraits retrouvés dans le Code du Travail ivoirien :
+${context || "Aucun extrait pertinent retrouvé."}
+
+Génère exactement 6 questions de clarification en JSON.
+Règles :
+- Les questions doivent servir à établir les faits, la procédure et les pièces utiles.
+- Ne crée aucune règle de droit.
+- Ne présente pas une hypothèse comme un fait.
+- Si les extraits sont insuffisants, pose des questions factuelles sans inventer.
+Format :
+{"questions":[{"id":1,"question":"...","field_name":"...","type":"radio|text","options":["..."]}]}`;
+
+    let data: any;
+    try { data = extractJson(await generateWithFallback(prompt)); }
+    catch {
+      data = { questions: [
+        { id:1, question:"Quel est votre statut dans la relation de travail ?", field_name:"party_status", type:"radio", options:["Salarié","Employeur","Autre"] },
+        { id:2, question:"Existe-t-il un contrat de travail écrit ?", field_name:"written_contract", type:"radio", options:["Oui","Non","Je ne sais pas"] },
+        { id:3, question:"Quel est le principal problème rencontré ?", field_name:"issue", type:"text", options:[] },
+        { id:4, question:"À quelle date les faits principaux ont-ils commencé ?", field_name:"date", type:"text", options:[] },
+        { id:5, question:"Disposez-vous de documents ou preuves ?", field_name:"evidence", type:"radio", options:["Oui","Non","Partiellement"] },
+        { id:6, question:"Une démarche a-t-elle déjà été engagée auprès de l'employeur ou de l'inspection du travail ?", field_name:"prior_step", type:"radio", options:["Oui","Non","Je ne sais pas"] }
+      ]};
+    }
+    await pool!.query("UPDATE diagnostic_results SET input_answers=$1 WHERE id=$2", [JSON.stringify({ question_set: data.questions }), inserted.rows[0].id]);
+    res.status(201).json({ success:true, diagnostic_id:inserted.rows[0].id, stage:"questions", current_question_set:data.questions, source:WORK_CODE_SOURCE, validation_status:WORK_CODE_SOURCE.validationStatus });
+  } catch (err:any) {
+    console.error("[Diagnostic Travail] Erreur:", err.message);
+    res.status(503).json({ success:false, message:"Le référentiel du Code du Travail est indisponible ou l'analyse n'a pas pu démarrer.", detail:err.message });
+  }
+});
+
+app.post("/api/diagnostic/travail/analyze", requireAuth, resolveUserId, async (req: any, res) => {
+  try {
+    const { diagnostic_id, answers } = req.body || {};
+    if (!diagnostic_id || !answers) return res.status(400).json({ success:false, message:"diagnostic_id et answers requis." });
+    const found = await pool!.query("SELECT * FROM diagnostic_results WHERE id=$1 AND user_id=$2 AND diagnostic_type='TRAVAIL'", [diagnostic_id, req.user.userId]);
+    if (!found.rows.length) return res.status(404).json({ success:false, message:"Diagnostic travail introuvable." });
+    const diagnostic = found.rows[0];
+
+    const searchText = [diagnostic.input_description, JSON.stringify(answers)].join(" ");
+    const search = await searchWorkCode(searchText, 12);
+    const excerpts = search.results.map((a:any)=>({article:a.article, text:a.text.slice(0,2200)}));
+    const prompt = `Tu es JurisCoach, assistant documentaire en droit du travail ivoirien.
+
+SITUATION :
+${diagnostic.input_description}
+
+RÉPONSES :
+${JSON.stringify(answers, null, 2)}
+
+SOURCES RETROUVÉES DANS LE CODE DU TRAVAIL :
+${JSON.stringify(excerpts, null, 2)}
+
+Produis uniquement un JSON.
+Règles impératives :
+1. Utilise uniquement les extraits fournis comme base juridique.
+2. N'invente aucun article, délai, compétence, formalité ou sanction.
+3. Si une information n'est pas établie, indique-la dans missing_information.
+4. Distingue les faits rapportés, les dispositions retrouvées et les points à vérifier.
+5. Ne rends aucune décision et ne prédis pas l'issue d'un litige.
+6. Pour chaque disposition citée, donne le numéro d'article et un court extrait fidèle.
+7. Signale que le référentiel doit être validé par le Tribunal avant usage institutionnel.
+
+Format :
+{"qualification":"...","confidence_level":"HAUTE|MODÉRÉE|FAIBLE","facts_to_verify":["..."],"applicable_articles":[{"article_number":"...","title":"...","text":"..."}],"procedure_steps":["..."],"documents_needed":["..."],"missing_information":["..."],"warnings":["..."],"source_status":"A_VALIDER_PAR_LE_TRIBUNAL"}`;
+
+    let result:any;
+    try { result=extractJson(await generateWithFallback(prompt)); }
+    catch {
+      result={
+        qualification:"Analyse documentaire à compléter",
+        confidence_level:"FAIBLE",
+        facts_to_verify:[],
+        applicable_articles:excerpts.map((x:any)=>({article_number:x.article,title:"Disposition retrouvée dans le Code du Travail",text:x.text})),
+        procedure_steps:[],
+        documents_needed:[],
+        missing_information:["L'analyse automatique n'a pas pu être finalisée."],
+        warnings:["Vérification humaine nécessaire avant toute utilisation institutionnelle."],
+        source_status:"A_VALIDER_PAR_LE_TRIBUNAL"
+      };
+    }
+    await pool!.query(
+      `UPDATE diagnostic_results SET input_answers=$1, primary_qualification=$2, confidence_level=$3, applicable_texts=$4, evidence_needed=$5, missing_information=$6, explanation_sources=$7 WHERE id=$8`,
+      [JSON.stringify(answers), result.qualification, result.confidence_level, JSON.stringify(result.applicable_articles||[]), JSON.stringify(result.documents_needed||[]), JSON.stringify(result.missing_information||[]), JSON.stringify({facts_to_verify:result.facts_to_verify||[],warnings:result.warnings||[],source_status:result.source_status}), diagnostic_id]
+    );
+    res.json({success:true, diagnostic_id, stage:"results", ...result, source:WORK_CODE_SOURCE});
+  } catch(err:any) {
+    console.error("[Diagnostic Travail Analyze] Erreur:",err.message);
+    res.status(503).json({success:false,message:"Analyse droit du travail indisponible.",detail:err.message});
+  }
+});
+
 // --- RECHERCHE JURIDIQUE ---
 
 app.get("/api/search/articles", requireAuth, async (req: any, res) => {
