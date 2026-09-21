@@ -1,0 +1,11 @@
+{
+  "id": "CI-CODE-TRAVAIL-2015-532",
+  "title": "Loi n° 2015-532 du 20 juillet 2015 portant Code du Travail",
+  "edition": "Édition 2021 — Code du Travail ivoirien + Convention Collective Interprofessionnelle",
+  "pages": 519,
+  "jurisdiction": "Côte d'Ivoire",
+  "officialSource": "https://www.economie-ivoirienne.ci/sites/default/files/sites/default/files/inline-files/Loi%20n%C2%B0%202015-532%20du%2020%20juillet%202015%20portant%20code%20du%20Travail.pdf",
+  "validationStatus": "A_VALIDER_PAR_LE_TRIBUNAL",
+  "integration": "JurisCoach",
+  "note": "Le module utilise un corpus local si legal/code-travail-2021.txt est présent; sinon il télécharge et analyse le PDF officiel à la demande."
+}
