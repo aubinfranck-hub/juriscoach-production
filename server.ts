@@ -378,6 +378,55 @@ async function initDatabase(): Promise<void> {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_generated_dossier ON generated_documents(dossier_id);
+
+    CREATE TABLE IF NOT EXISTS labor_cases (
+      id SERIAL PRIMARY KEY,
+      dossier_id INTEGER UNIQUE NOT NULL REFERENCES dossiers(id) ON DELETE CASCADE,
+      employee_name VARCHAR(200) NOT NULL,
+      employee_phone VARCHAR(30),
+      employee_email VARCHAR(200),
+      employer_name VARCHAR(300) NOT NULL,
+      employer_contact VARCHAR(300),
+      employment_start DATE,
+      employment_end DATE,
+      contract_type VARCHAR(80),
+      dispute_type VARCHAR(150),
+      tribunal VARCHAR(200),
+      tribunal_status VARCHAR(50) NOT NULL DEFAULT 'A_PREPARER',
+      current_step VARCHAR(50) NOT NULL DEFAULT 'BROUILLON',
+      labor_inspector_reference VARCHAR(150),
+      non_conciliation_date DATE,
+      submitted_at TIMESTAMP,
+      validated_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_labor_cases_step ON labor_cases(current_step);
+
+    CREATE TABLE IF NOT EXISTS labor_case_events (
+      id SERIAL PRIMARY KEY,
+      labor_case_id INTEGER NOT NULL REFERENCES labor_cases(id) ON DELETE CASCADE,
+      status VARCHAR(50) NOT NULL,
+      title VARCHAR(250) NOT NULL,
+      description TEXT,
+      event_date DATE NOT NULL,
+      actor_role VARCHAR(80) DEFAULT 'UTILISATEUR',
+      created_by_user_id INTEGER REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_labor_case_events_case ON labor_case_events(labor_case_id, event_date DESC);
+
+    CREATE TABLE IF NOT EXISTS labor_case_documents (
+      id SERIAL PRIMARY KEY,
+      labor_case_id INTEGER NOT NULL REFERENCES labor_cases(id) ON DELETE CASCADE,
+      document_type VARCHAR(100) NOT NULL,
+      document_name VARCHAR(300) NOT NULL,
+      required BOOLEAN NOT NULL DEFAULT false,
+      received BOOLEAN NOT NULL DEFAULT true,
+      file_path VARCHAR(500),
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_labor_case_documents_case ON labor_case_documents(labor_case_id);
   `);
 
   // Index unique séparé (pas dans le bloc principal) : si des doublons existent déjà en base,
@@ -1347,6 +1396,125 @@ app.get("/api/dossiers/:id/chronology", requireAuth, async (req: any, res) => {
   if (owner.rows.length === 0) return res.status(404).json({ success: false, message: "Dossier introuvable." });
   const result = await pool!.query("SELECT id, event_date, event_type, description, importance, created_at FROM dossier_chronology WHERE dossier_id = $1 ORDER BY event_date DESC", [req.params.id]);
   res.json({ success: true, chronology: result.rows });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
+// DOSSIERS TRAVAIL — préparation et suivi du parcours Tribunal du Travail
+// Le circuit électronique est modélisé côté applicatif mais reste soumis à
+// validation institutionnelle avant de constituer une saisine juridiquement valable.
+// ═══════════════════════════════════════════════════════════════════════
+const LABOR_STEPS = [
+  "BROUILLON","PREPARATION","SAISINE_A_VALIDER","RECU","VERIFICATION",
+  "COMPLEMENT_REQUIS","COMPLET","CONVOCATION","CONCILIATION","AUDIENCE","DECISION","CLOTURE"
+];
+
+async function getOwnedLaborCase(req:any, dossierId:number) {
+  const result = await pool!.query(
+    `SELECT lc.*, d.dossier_number, d.title, d.description, d.status AS dossier_status
+     FROM labor_cases lc JOIN dossiers d ON d.id=lc.dossier_id
+     WHERE lc.dossier_id=$1 AND d.user_id=$2`,
+    [dossierId, req.user.userId]
+  );
+  return result.rows[0] || null;
+}
+
+app.post("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const b=req.body||{};
+  if(!b.title||!b.employee_name||!b.employer_name) {
+    return res.status(400).json({success:false,message:"Titre, salarié et employeur sont requis."});
+  }
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const dossierNumber=`TRV-${new Date().getFullYear()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    const d=await client.query(
+      `INSERT INTO dossiers(user_id,dossier_number,title,domain,description,client_name,client_phone,client_email,adversary_name,adversary_contact,tribunal)
+       VALUES($1,$2,$3,'TRAVAIL',$4,$5,$6,$7,$8,$9,$10) RETURNING id,dossier_number`,
+      [req.user.userId,dossierNumber,String(b.title).slice(0,300),b.description||null,b.employee_name,b.employee_phone||null,b.employee_email||null,b.employer_name,b.employer_contact||null,b.tribunal||null]
+    );
+    const dossier=d.rows[0];
+    const c=await client.query(
+      `INSERT INTO labor_cases(dossier_id,employee_name,employee_phone,employee_email,employer_name,employer_contact,employment_start,employment_end,contract_type,dispute_type,tribunal)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+      [dossier.id,b.employee_name,b.employee_phone||null,b.employee_email||null,b.employer_name,b.employer_contact||null,b.employment_start||null,b.employment_end||null,b.contract_type||null,b.dispute_type||null,b.tribunal||null]
+    );
+    await client.query(
+      `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+       VALUES($1,'BROUILLON','Dossier créé','Préparation initiale du dossier.',CURRENT_DATE,'UTILISATEUR',$2)`,
+      [c.rows[0].id,req.user.userId]
+    );
+    await client.query("COMMIT");
+    res.status(201).json({success:true,dossier_id:dossier.id,dossier_number:dossier.dossier_number,labor_case_id:c.rows[0].id});
+  } catch(err:any) {
+    await client.query("ROLLBACK");
+    console.error("[Travail] création:",err.message);
+    res.status(500).json({success:false,message:"Création du dossier travail impossible."});
+  } finally { client.release(); }
+});
+
+app.get("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows}=await pool.query(
+    `SELECT lc.id,lc.dossier_id,d.dossier_number,d.title,lc.employee_name,lc.employer_name,lc.tribunal_status,lc.current_step,lc.created_at
+     FROM labor_cases lc JOIN dossiers d ON d.id=lc.dossier_id
+     WHERE d.user_id=$1 ORDER BY lc.created_at DESC LIMIT 100`,[req.user.userId]
+  );
+  res.json({success:true,cases:rows});
+});
+
+app.get("/api/travail/dossiers/:id", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier travail introuvable."});
+  const [events,documents]=await Promise.all([
+    pool.query(`SELECT id,status,title,description,event_date,actor_role,created_at FROM labor_case_events WHERE labor_case_id=$1 ORDER BY event_date DESC,created_at DESC`,[c.id]),
+    pool.query(`SELECT id,document_type,document_name,required,received,uploaded_at FROM labor_case_documents WHERE labor_case_id=$1 ORDER BY uploaded_at DESC`,[c.id])
+  ]);
+  res.json({success:true,...c,events:events.rows,documents:documents.rows});
+});
+
+app.post("/api/travail/dossiers/:id/events", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier travail introuvable."});
+  const b=req.body||{}; const status=String(b.status||"").trim();
+  if(!LABOR_STEPS.includes(status)||!b.title||!b.event_date) return res.status(400).json({success:false,message:"Étape, titre et date sont requis."});
+  await pool!.query(
+    `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+     VALUES($1,$2,$3,$4,$5,'UTILISATEUR',$6)`,
+    [c.id,status,String(b.title).slice(0,250),b.description?String(b.description).slice(0,5000):null,b.event_date,req.user.userId]
+  );
+  await pool!.query(`UPDATE labor_cases SET current_step=$2,updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id,status]);
+  res.status(201).json({success:true});
+});
+
+app.post("/api/travail/dossiers/:id/documents", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier travail introuvable."});
+  const b=req.body||{};
+  if(!b.document_name||!b.document_type) return res.status(400).json({success:false,message:"Type et nom de pièce requis."});
+  const {rows}=await pool!.query(
+    `INSERT INTO labor_case_documents(labor_case_id,document_type,document_name,required,received)
+     VALUES($1,$2,$3,$4,true) RETURNING id`,
+    [c.id,String(b.document_type).slice(0,100),String(b.document_name).slice(0,300),b.required===true]
+  );
+  res.status(201).json({success:true,document_id:rows[0].id});
+});
+
+app.post("/api/travail/dossiers/:id/submit", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier travail introuvable."});
+  if(!["BROUILLON","PREPARATION"].includes(c.current_step)) return res.status(409).json({success:false,message:"Ce dossier n'est pas dans un état soumettable."});
+  await pool!.query(`UPDATE labor_cases SET current_step='SAISINE_A_VALIDER',tribunal_status='A_VALIDER_PAR_GREFFE',submitted_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
+  await pool!.query(
+    `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+     VALUES($1,'SAISINE_A_VALIDER','Dossier transmis pour validation','Transmission applicative en attente de validation du Greffe.',CURRENT_DATE,'UTILISATEUR',$2)`,
+    [c.id,req.user.userId]
+  );
+  res.json({success:true,message:"Dossier transmis pour validation du Greffe.",legal_effect:"NON_DETERMINE_SANS_VALIDATION_INSTITUTIONNELLE"});
 });
 
 // --- GÉNÉRATION DE DOCUMENTS ---
