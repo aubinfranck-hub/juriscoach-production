@@ -507,7 +507,7 @@ app.use(express.json({ limit: "15mb" }));
 
 app.get("/api/legal/work-code/status", requireAuth, async (req, res) => {
   const status = await workCodeStatus();
-  res.json({ success: true, source: WORK_CODE_SOURCE, ...status });
+  res.json({ success: true, ...status, source: WORK_CODE_SOURCE });
 });
 
 app.get("/api/legal/work-code/search", requireAuth, async (req, res) => {
