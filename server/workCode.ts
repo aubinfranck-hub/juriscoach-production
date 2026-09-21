@@ -10,6 +10,7 @@ export const WORK_CODE_SOURCE = {
   pages: 519,
   officialUrl: "https://www.economie-ivoirienne.ci/sites/default/files/sites/default/files/inline-files/Loi%20n%C2%B0%202015-532%20du%2020%20juillet%202015%20portant%20code%20du%20Travail.pdf",
   validationStatus: "A_VALIDER_PAR_LE_TRIBUNAL",
+  officialAmendmentNotice: "Le portail officiel référence également l’Ordonnance n°2021-902 du 22 décembre 2021 modifiant la loi n°2015-532. Son texte doit être intégré/vérifié séparément avant de considérer le corpus comme consolidé.",
 };
 
 type Article = { article: string; page?: number; text: string };
