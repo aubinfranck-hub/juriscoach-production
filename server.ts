@@ -7,6 +7,7 @@ import crypto from "crypto";
 import rateLimit from "express-rate-limit";
 import { GoogleGenAI, Modality, StartSensitivity, EndSensitivity } from "@google/genai";
 import pdfParse from "pdf-parse";
+import { searchWorkCode, workCodeStatus, WORK_CODE_SOURCE } from "./server/workCode";
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -89,10 +90,15 @@ async function persistSession(token: string): Promise<void> {
 function requireAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
-  if (!token || !sessions.has(token)) {
-    return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  const session = token ? sessions.get(token) : null;
+  const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  if (!token || !session) return res.status(401).json({ success: false, message: "Session invalide ou expirée. Veuillez vous reconnecter." });
+  if (Date.now() - session.createdAt > SESSION_MAX_AGE_MS) {
+    sessions.delete(token);
+    pool?.query("DELETE FROM sessions WHERE token = $1", [token]).catch(() => {});
+    return res.status(401).json({ success: false, message: "Session expirée. Veuillez vous reconnecter." });
   }
-  req.session = sessions.get(token);
+  req.session = session;
   next();
 }
 
@@ -118,7 +124,8 @@ function requireAdminAuth(req: any, res: any, next: any) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
   const session = token ? sessions.get(token) : null;
-  if (session && userAccounts.get(session.phone)?.isAdmin) return next();
+  const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  if (session && Date.now() - session.createdAt <= SESSION_MAX_AGE_MS && userAccounts.get(session.phone)?.isAdmin) return next();
   return res.status(401).json({ success: false, message: "Accès admin refusé." });
 }
 
@@ -302,6 +309,62 @@ async function initDatabase(): Promise<void> {
       last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
+    CREATE TABLE IF NOT EXISTS sponsored_ads (
+      id SERIAL PRIMARY KEY,
+      title VARCHAR(200) NOT NULL,
+      description TEXT,
+      audio_data BYTEA NOT NULL,
+      mime_type VARCHAR(100) NOT NULL DEFAULT 'audio/mpeg',
+      duration_seconds INTEGER,
+      active BOOLEAN NOT NULL DEFAULT true,
+      priority INTEGER NOT NULL DEFAULT 0,
+      max_plays_per_user INTEGER NOT NULL DEFAULT 1,
+      advertiser_name VARCHAR(200),
+      campaign_ref VARCHAR(100),
+      price_per_1000_xaf INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_sponsored_ads_active ON sponsored_ads(active, priority DESC);
+
+    CREATE TABLE IF NOT EXISTS sponsored_sessions (
+      id UUID PRIMARY KEY,
+      phone TEXT NOT NULL,
+      ad_id INTEGER REFERENCES sponsored_ads(id) ON DELETE SET NULL,
+      challenge_digit SMALLINT NOT NULL,
+      challenge_attempts SMALLINT NOT NULL DEFAULT 0,
+      challenge_verified BOOLEAN NOT NULL DEFAULT false,
+      ad_started_at TIMESTAMP,
+      ad_completed_at TIMESTAMP,
+      status VARCHAR(30) NOT NULL DEFAULT 'ad_pending',
+      started_at TIMESTAMP,
+      consultation_started_at TIMESTAMP,
+      ends_at TIMESTAMP,
+      completed_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_sponsored_sessions_phone ON sponsored_sessions(phone, created_at DESC);
+    CREATE TABLE IF NOT EXISTS customer_profiles (
+      phone TEXT PRIMARY KEY, full_name VARCHAR(200), email VARCHAR(200),
+      preferred_channel VARCHAR(30) NOT NULL DEFAULT 'WHATSAPP', tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      notes TEXT, last_contact_at TIMESTAMP, next_followup_at TIMESTAMP,
+      followup_status VARCHAR(30) NOT NULL DEFAULT 'A_FAIRE', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_customer_followup ON customer_profiles(next_followup_at, followup_status);
+    CREATE TABLE IF NOT EXISTS contact_events (
+      id SERIAL PRIMARY KEY, phone TEXT NOT NULL, channel VARCHAR(30) NOT NULL, event_type VARCHAR(50) NOT NULL DEFAULT 'CONTACT',
+      subject VARCHAR(300), notes TEXT, admin_phone TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_contact_events_phone ON contact_events(phone, created_at DESC);
+    CREATE TABLE IF NOT EXISTS crm_campaigns (
+      id SERIAL PRIMARY KEY, name VARCHAR(200) NOT NULL, channel VARCHAR(30) NOT NULL, message TEXT NOT NULL, status VARCHAR(30) NOT NULL DEFAULT 'BROUILLON',
+      scheduled_at TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS admin_audit_logs (
+      id BIGSERIAL PRIMARY KEY, admin_phone TEXT NOT NULL, action VARCHAR(100) NOT NULL, target VARCHAR(200), details JSONB, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
+
     CREATE TABLE IF NOT EXISTS generated_documents (
       id SERIAL PRIMARY KEY,
       dossier_id INTEGER NOT NULL REFERENCES dossiers(id) ON DELETE CASCADE,
@@ -315,6 +378,58 @@ async function initDatabase(): Promise<void> {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     CREATE INDEX IF NOT EXISTS idx_generated_dossier ON generated_documents(dossier_id);
+
+    CREATE TABLE IF NOT EXISTS labor_cases (
+      id SERIAL PRIMARY KEY,
+      dossier_id INTEGER UNIQUE NOT NULL REFERENCES dossiers(id) ON DELETE CASCADE,
+      employee_name VARCHAR(200) NOT NULL,
+      employee_phone VARCHAR(30),
+      employee_email VARCHAR(200),
+      employer_name VARCHAR(300) NOT NULL,
+      employer_contact VARCHAR(300),
+      employment_start DATE,
+      employment_end DATE,
+      contract_type VARCHAR(80),
+      dispute_type VARCHAR(150),
+      tribunal VARCHAR(200),
+      tribunal_status VARCHAR(50) NOT NULL DEFAULT 'LEGACY_NON_UTILISE',
+      current_step VARCHAR(50) NOT NULL DEFAULT 'BROUILLON',
+      labor_inspector_reference VARCHAR(150),
+      non_conciliation_date DATE,
+      submitted_at TIMESTAMP,
+      validated_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_labor_cases_step ON labor_cases(current_step);
+
+    CREATE TABLE IF NOT EXISTS labor_case_events (
+      id SERIAL PRIMARY KEY,
+      labor_case_id INTEGER NOT NULL REFERENCES labor_cases(id) ON DELETE CASCADE,
+      status VARCHAR(50) NOT NULL,
+      title VARCHAR(250) NOT NULL,
+      description TEXT,
+      event_date DATE NOT NULL,
+      actor_role VARCHAR(80) DEFAULT 'UTILISATEUR',
+      created_by_user_id INTEGER REFERENCES users(id),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_labor_case_events_case ON labor_case_events(labor_case_id, event_date DESC);
+
+    CREATE TABLE IF NOT EXISTS labor_case_documents (
+      id SERIAL PRIMARY KEY,
+      labor_case_id INTEGER NOT NULL REFERENCES labor_cases(id) ON DELETE CASCADE,
+      document_type VARCHAR(100) NOT NULL,
+      document_name VARCHAR(300) NOT NULL,
+      required BOOLEAN NOT NULL DEFAULT false,
+      received BOOLEAN NOT NULL DEFAULT true,
+      file_path VARCHAR(500),
+      file_data BYTEA,
+      mime_type VARCHAR(120),
+      file_size INTEGER,
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_labor_case_documents_case ON labor_case_documents(labor_case_id);
   `);
 
   // Index unique séparé (pas dans le bloc principal) : si des doublons existent déjà en base,
@@ -339,6 +454,20 @@ async function initDatabase(): Promise<void> {
 
   // Ajoute is_pro aux comptes déjà existants (créés avant l'introduction du statut Pro).
   try {
+    await pool.query(`ALTER TABLE sponsored_sessions ADD COLUMN IF NOT EXISTS challenge_attempts SMALLINT NOT NULL DEFAULT 0`);
+  } catch (err: any) {
+    console.warn("[DB] Ajout de challenge_attempts échoué :", err.message);
+  }
+
+  try {
+    await pool.query(`ALTER TABLE sponsored_ads ADD COLUMN IF NOT EXISTS advertiser_name VARCHAR(200), ADD COLUMN IF NOT EXISTS campaign_ref VARCHAR(100), ADD COLUMN IF NOT EXISTS price_per_1000_xaf INTEGER NOT NULL DEFAULT 0`);
+  } catch (err: any) { console.warn("[DB] Colonnes sponsor annonceur échouées :", err.message); }
+
+  try {
+    await pool.query(`ALTER TABLE sponsored_sessions ADD COLUMN IF NOT EXISTS ad_started_at TIMESTAMP, ADD COLUMN IF NOT EXISTS ad_completed_at TIMESTAMP`);
+  } catch (err: any) { console.warn("[DB] Colonnes suivi écoute sponsor échouées :", err.message); }
+
+  try {
     await pool.query(`ALTER TABLE accounts ADD COLUMN IF NOT EXISTS is_pro BOOLEAN NOT NULL DEFAULT false`);
   } catch (err: any) {
     console.warn("[DB] Ajout de is_pro échoué :", err.message);
@@ -353,6 +482,7 @@ async function initDatabase(): Promise<void> {
     });
   }
   const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+  await pool.query("DELETE FROM sessions WHERE created_at < $1", [Date.now() - SESSION_MAX_AGE_MS]);
   const sessionsRes = await pool.query("SELECT * FROM sessions");
   let loadedSessions = 0;
   for (const row of sessionsRes.rows) {
@@ -372,8 +502,24 @@ async function initDatabase(): Promise<void> {
   }
 }
 
-app.use(cors());
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN ? process.env.FRONTEND_ORIGIN.split(",").map((s) => s.trim()).filter(Boolean) : true }));
 app.use(express.json({ limit: "15mb" }));
+
+app.get("/api/legal/work-code/status", requireAuth, async (req, res) => {
+  const status = await workCodeStatus();
+  res.json({ success: true, ...status, source: WORK_CODE_SOURCE });
+});
+
+app.get("/api/legal/work-code/search", requireAuth, async (req, res) => {
+  const q = String(req.query.q || "").trim();
+  if (q.length < 2) return res.status(400).json({ success: false, message: "Recherche trop courte (2 caractères min)." });
+  try {
+    const result = await searchWorkCode(q, Number(req.query.limit) || 20);
+    res.json({ success: true, ...result });
+  } catch (error: any) {
+    res.status(503).json({ success: false, message: "Référentiel du Code du Travail indisponible.", detail: error?.message });
+  }
+});
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", app: "juriscoach" });
@@ -425,6 +571,218 @@ app.get("/api/user/status", requireAuth, (req: any, res) => {
   res.json({ success: true, phone: req.session.phone, isAdmin: acc?.isAdmin === true, isPro: acc?.isPro === true });
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// SPONSORISATION — bibliothèque audio + sessions sponsorisées
+// ═══════════════════════════════════════════════════════════════════════
+app.get("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
+  const { rows } = await pool.query(
+    `SELECT id, title, description, mime_type, duration_seconds, active, priority, max_plays_per_user, created_at, updated_at
+     FROM sponsored_ads ORDER BY active DESC, priority DESC, created_at DESC`
+  );
+  res.json({ success:true, ads:rows });
+});
+
+app.post("/api/admin/sponsored-ads", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
+  const { title, description, audioBase64, mimeType, durationSeconds, priority, maxPlaysPerUser, advertiserName, campaignRef, pricePer1000Xaf } = req.body || {};
+  if (!title || !audioBase64) return res.status(400).json({ success:false, message:"Titre et fichier audio requis." });
+  const match = String(audioBase64).match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return res.status(400).json({ success:false, message:"Audio invalide. Utilisez un fichier audio encodé en base64." });
+  const raw = Buffer.from(match[2], "base64");
+  if (raw.length > 12 * 1024 * 1024) return res.status(413).json({ success:false, message:"Audio trop volumineux (12 Mo maximum)." });
+  const mime = String(mimeType || match[1] || "audio/mpeg").slice(0,100);
+  const { rows } = await pool.query(
+    `INSERT INTO sponsored_ads (title, description, audio_data, mime_type, duration_seconds, priority, max_plays_per_user, advertiser_name, campaign_ref, price_per_1000_xaf)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id, title, description, mime_type, duration_seconds, active, priority, max_plays_per_user, advertiser_name, campaign_ref, price_per_1000_xaf, created_at`,
+    [String(title).slice(0,200), description ? String(description).slice(0,2000) : null, raw, mime,
+     Number.isFinite(Number(durationSeconds)) ? Math.max(0, Math.min(3600, Number(durationSeconds))) : null,
+     Number.isFinite(Number(priority)) ? Math.max(0, Math.min(1000, Number(priority))) : 0,
+     Number.isFinite(Number(maxPlaysPerUser)) ? Math.max(1, Math.min(100, Number(maxPlaysPerUser))) : 1,
+     advertiserName ? String(advertiserName).slice(0,200) : null, campaignRef ? String(campaignRef).slice(0,100) : null,
+     Number.isFinite(Number(pricePer1000Xaf)) ? Math.max(0, Math.round(Number(pricePer1000Xaf))) : 0]
+  );
+  res.status(201).json({ success:true, ad:rows[0] });
+});
+
+app.patch("/api/admin/sponsored-ads/:id", requireAdminAuth, async (req, res) => {
+  if (!pool) return res.status(503).json({ success:false, message:"Service indisponible." });
+  const id = Number(req.params.id);
+  const { title, description, active, priority, maxPlaysPerUser } = req.body || {};
+  const { rows } = await pool.query(
+    `UPDATE sponsored_ads SET
+      title=COALESCE($2,title), description=COALESCE($3,description), active=COALESCE($4,active),
+      priority=COALESCE($5,priority), max_plays_per_user=COALESCE($6,max_plays_per_user), updated_at=CURRENT_TIMESTAMP
+     WHERE id=$1 RETURNING id,title,description,mime_type,duration_seconds,active,priority,max_plays_per_user,created_at,updated_at`,
+    [id, title ? String(title).slice(0,200) : null, description === undefined ? null : String(description).slice(0,2000),
+     typeof active === "boolean" ? active : null,
+     priority === undefined ? null : Math.max(0, Math.min(1000, Number(priority))),
+     maxPlaysPerUser === undefined ? null : Math.max(1, Math.min(100, Number(maxPlaysPerUser)))]
+  );
+  if (!rows.length) return res.status(404).json({success:false,message:"Publicité introuvable."});
+  res.json({success:true,ad:rows[0]});
+});
+
+app.delete("/api/admin/sponsored-ads/:id", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rowCount}=await pool.query("DELETE FROM sponsored_ads WHERE id=$1",[Number(req.params.id)]);
+  if(!rowCount) return res.status(404).json({success:false,message:"Publicité introuvable."});
+  res.json({success:true});
+});
+
+app.get("/api/admin/sponsored-sessions", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows}=await pool.query(
+    `SELECT s.id,s.phone,s.status,s.challenge_verified,s.started_at,s.consultation_started_at,s.ends_at,s.completed_at,s.created_at,
+            a.title AS ad_title
+     FROM sponsored_sessions s LEFT JOIN sponsored_ads a ON a.id=s.ad_id
+     ORDER BY s.created_at DESC LIMIT 200`
+  );
+  res.json({success:true,sessions:rows});
+});
+
+app.get("/api/admin/sponsored-stats", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows}=await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM sponsored_ads WHERE active) AS active_ads,
+      (SELECT COUNT(*) FROM sponsored_sessions) AS total_sessions,
+      (SELECT COUNT(*) FROM sponsored_sessions WHERE challenge_verified) AS verified_sessions,
+      (SELECT COUNT(*) FROM sponsored_sessions WHERE status='completed') AS completed_sessions,
+      (SELECT COUNT(*) FROM sponsored_sessions WHERE status='consulting' AND ends_at > CURRENT_TIMESTAMP) AS active_consultations
+  `);
+  res.json({success:true,stats:rows[0]});
+});
+
+app.get("/api/sponsored/ads/:id/audio", async (req,res) => {
+  if (!pool) return res.status(503).end();
+  const {rows}=await pool.query("SELECT audio_data,mime_type FROM sponsored_ads WHERE id=$1 AND active=true",[Number(req.params.id)]);
+  if(!rows.length) return res.status(404).end();
+  res.setHeader("Content-Type",rows[0].mime_type || "audio/mpeg");
+  res.setHeader("Cache-Control","private, max-age=300");
+  res.send(rows[0].audio_data);
+});
+
+
+app.get("/api/admin/sponsored-report/:id", requireAdminAuth, async (req,res) => {
+  if(!pool)return res.status(503).json({success:false,message:"Service indisponible."});
+  const id=Number(req.params.id); const {rows}=await pool.query(
+   `SELECT a.id,a.title,a.advertiser_name,a.campaign_ref,a.price_per_1000_xaf,
+      COUNT(s.id)::int AS sessions,
+      COUNT(s.id) FILTER (WHERE s.challenge_verified)::int AS confirmed_listens,
+      COUNT(s.id) FILTER (WHERE s.status='completed')::int AS completed_sessions,
+      COUNT(DISTINCT s.phone)::int AS unique_phones,
+      COALESCE(SUM(CASE WHEN s.challenge_verified THEN 1 ELSE 0 END),0)::int AS billable_plays
+    FROM sponsored_ads a LEFT JOIN sponsored_sessions s ON s.ad_id=a.id WHERE a.id=$1
+    GROUP BY a.id`,[id]);
+  if(!rows.length)return res.status(404).json({success:false,message:"Campagne introuvable."});
+  const {rows:details}=await pool.query(`SELECT s.id,s.phone,s.challenge_verified,s.challenge_attempts,s.status,s.created_at,s.consultation_started_at,s.completed_at FROM sponsored_sessions s WHERE s.ad_id=$1 ORDER BY s.created_at DESC LIMIT 2000`,[id]);
+  res.json({success:true,summary:rows[0],details});
+});
+
+app.get("/api/admin/sponsored-cost-estimate", requireAdminAuth, async (req,res) => {
+  const sessions=Math.max(0,Number(req.query.sessions||1000)); const minutes=Math.max(0,Number(req.query.minutes||3));
+  const inputPerMin=0.005, outputPerMin=0.018, usdToXaf=Math.max(1,Number(req.query.usdToXaf||600));
+  const geminiPerSessionUsd=(inputPerMin+outputPerMin)*minutes;
+  res.json({success:true,model:"gemini-3.1-flash-live-preview",sessions,minutes,usdToXaf,inputAudioUsdPerMinute:inputPerMin,outputAudioUsdPerMinute:outputPerMin,estimatedGeminiUsd:geminiPerSessionUsd*sessions,estimatedGeminiXaf:Math.round(geminiPerSessionUsd*sessions*usdToXaf),estimatedPerSessionXaf:Math.round(geminiPerSessionUsd*usdToXaf),note:"Estimation haute si l'audio entrant et sortant sont consommés pendant toute la durée; les transcriptions texte, hébergement et autres coûts sont à ajouter."});
+});
+
+app.post("/api/sponsored/start", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows:ads}=await pool.query(
+    `SELECT id,title,description,duration_seconds,max_plays_per_user,
+       (SELECT COUNT(*) FROM sponsored_sessions ss WHERE ss.phone=$1 AND ss.ad_id=sponsored_ads.id AND ss.challenge_verified=true) AS user_plays
+     FROM sponsored_ads WHERE active=true ORDER BY priority DESC, random() LIMIT 50`, [req.session.phone]
+  );
+  const eligibleAds=ads.filter((a:any)=>Number(a.user_plays||0) < Number(a.max_plays_per_user||1));
+  if(!eligibleAds.length) return res.status(503).json({success:false,message:"Aucune publicité sponsorisée disponible pour ce compte pour le moment."});
+  const ad=eligibleAds[Math.floor(Math.random()*eligibleAds.length)];
+  const challenge=Math.floor(Math.random()*10);
+  const id=crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO sponsored_sessions (id,phone,ad_id,challenge_digit,status) VALUES ($1,$2,$3,$4,'ad_pending')`,
+    [id,req.session.phone,ad.id,challenge]
+  );
+  res.json({success:true,sessionId:id,ad,challengeDigit:challenge,audioUrl:`/api/sponsored/ads/${ad.id}/audio`});
+});
+
+app.post("/api/sponsored/ad-start", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body||{};
+  if(!sessionId) return res.status(400).json({success:false,message:"Session requise."});
+  try {
+    const {rows}=await pool.query(
+      `UPDATE sponsored_sessions SET ad_started_at=COALESCE(ad_started_at,CURRENT_TIMESTAMP), status='ad_playing'
+       WHERE id=$1::uuid AND phone=$2 AND ad_completed_at IS NULL
+       RETURNING id`, [sessionId,req.session.phone]);
+    if(!rows.length) return res.status(404).json({success:false,message:"Session sponsorisée introuvable."});
+    res.json({success:true});
+  } catch(err:any){ console.error("[Sponsored] ad-start:",err.message); res.status(500).json({success:false,message:"Erreur interne."}); }
+});
+
+app.post("/api/sponsored/ad-complete", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body||{};
+  if(!sessionId) return res.status(400).json({success:false,message:"Session requise."});
+  try {
+    const {rows}=await pool.query(
+      `UPDATE sponsored_sessions ss SET ad_completed_at=CURRENT_TIMESTAMP,status='ad_listened'
+       FROM sponsored_ads a
+       WHERE ss.id=$1::uuid AND ss.phone=$2 AND ss.ad_id=a.id AND ss.ad_started_at IS NOT NULL
+         AND ss.ad_completed_at IS NULL
+         AND (a.duration_seconds IS NULL OR a.duration_seconds<=0 OR
+              CURRENT_TIMESTAMP >= ss.ad_started_at + make_interval(secs => GREATEST(a.duration_seconds-2,0)))
+       RETURNING ss.id`, [sessionId,req.session.phone]);
+    if(!rows.length) return res.status(409).json({success:false,message:"La durée minimale d'écoute n'est pas encore atteinte."});
+    res.json({success:true});
+  } catch(err:any){ console.error("[Sponsored] ad-complete:",err.message); res.status(500).json({success:false,message:"Erreur interne."}); }
+});
+
+app.post("/api/sponsored/validate", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId,digit}=req.body || {};
+  const {rows}=await pool.query(
+    "SELECT * FROM sponsored_sessions WHERE id=$1 AND phone=$2 AND ad_completed_at IS NOT NULL",[sessionId,req.session.phone]
+  );
+  if(!rows.length) return res.status(404).json({success:false,message:"Session sponsorisée introuvable."});
+  const s=rows[0];
+  if(s.challenge_verified) return res.json({success:true,verified:true});
+  if(s.status !== 'ad_pending') return res.status(409).json({success:false,verified:false,message:"Cette session n'est plus disponible."});
+  if(Number(digit)!==Number(s.challenge_digit)) {
+    const attempts=Number(s.challenge_attempts||0)+1;
+    await pool.query("UPDATE sponsored_sessions SET challenge_attempts=$2,status=$3 WHERE id=$1 AND phone=$4",[sessionId,attempts,attempts>=5?"expired":"ad_pending",req.session.phone]);
+    return res.status(400).json({success:false,verified:false,attemptsRemaining:Math.max(0,5-attempts),message:attempts>=5?"Trop de tentatives. Recommencez une nouvelle session sponsorisée.":"Réponse incorrecte. Écoutez attentivement la publicité et réessayez."});
+  }
+  const start=new Date();
+  const end=new Date(start.getTime()+3*60*1000);
+  await pool.query(
+    "UPDATE sponsored_sessions SET challenge_verified=true,status='ready',started_at=$2 WHERE id=$1 AND phone=$3",
+    [sessionId,start,req.session.phone]
+  );
+  res.json({success:true,verified:true,consultationDurationSeconds:180,startsOnFirstQuestion:true,endsAt:end.toISOString()});
+});
+
+app.post("/api/sponsored/consultation-start", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body || {};
+  const {rows}=await pool.query("SELECT * FROM sponsored_sessions WHERE id=$1 AND phone=$2",[sessionId,req.session.phone]);
+  if(!rows.length) return res.status(404).json({success:false,message:"Session introuvable."});
+  const s=rows[0];
+  if(!s.challenge_verified) return res.status(403).json({success:false,message:"Publicité non validée."});
+  if(s.status==='consulting' && s.ends_at > new Date()) return res.json({success:true,alreadyStarted:true,endsAt:s.ends_at});
+  const now=new Date();
+  const end=new Date(now.getTime()+180000);
+  await pool.query("UPDATE sponsored_sessions SET status='consulting',consultation_started_at=$2,ends_at=$3 WHERE id=$1 AND phone=$4",[sessionId,now,end,req.session.phone]);
+  res.json({success:true,endsAt:end.toISOString(),durationSeconds:180});
+});
+
+app.post("/api/sponsored/complete", requireAuth, async (req:any,res:any) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {sessionId}=req.body || {};
+  await pool.query("UPDATE sponsored_sessions SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND phone=$2",[sessionId,req.session.phone]);
+  res.json({success:true});
+});
+
 app.post("/api/admin/toggle-pro", requireAdminAuth, async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ success: false, message: "phone requis." });
@@ -467,6 +825,43 @@ app.post("/api/admin/accounts/:phone/reset-password", requireAdminAuth, (req, re
   }
   res.json({ success: true, newPassword });
 });
+// CRM ADMIN
+async function writeAdminAudit(req:any, action:string, target:string|null, details:any = {}) {
+  if (!pool) return;
+  try { await pool.query("INSERT INTO admin_audit_logs (admin_phone,action,target,details) VALUES ($1,$2,$3,$4)", [req.session?.phone || "admin-secret", action, target, details]); } catch {}
+}
+
+app.get("/api/admin/crm/customers", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const q=String(req.query.q||"").trim(); const params:any[]=[]; const where:string[]=[];
+  if(q){ params.push(`%${q}%`); where.push(`(a.phone ILIKE ${params.length} OR COALESCE(c.full_name,'') ILIKE ${params.length} OR COALESCE(c.email,'') ILIKE ${params.length})`); }
+  const sql=`SELECT a.phone,a.created_at AS account_created_at,a.is_pro,a.is_admin,c.full_name,c.email,c.preferred_channel,c.tags,c.notes,c.last_contact_at,c.next_followup_at,c.followup_status,c.updated_at FROM accounts a LEFT JOIN customer_profiles c ON c.phone=a.phone ${where.length?"WHERE "+where.join(" AND "):""} ORDER BY COALESCE(c.next_followup_at, TIMESTAMP '2999-12-31'), a.created_at DESC LIMIT 500`;
+  const {rows}=await pool.query(sql,params); res.json({success:true,customers:rows});
+});
+
+app.patch("/api/admin/crm/customers/:phone", requireAdminAuth, async (req:any,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const phone=normalizePhone(decodeURIComponent(req.params.phone)); const b=req.body||{};
+  await pool.query(`INSERT INTO customer_profiles(phone,full_name,email,preferred_channel,tags,notes,last_contact_at,next_followup_at,followup_status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(phone) DO UPDATE SET full_name=$2,email=$3,preferred_channel=$4,tags=$5,notes=$6,last_contact_at=$7,next_followup_at=$8,followup_status=$9,updated_at=CURRENT_TIMESTAMP`,[phone,b.fullName?String(b.fullName).slice(0,200):null,b.email?String(b.email).slice(0,200):null,String(b.preferredChannel||"WHATSAPP").slice(0,30),Array.isArray(b.tags)?b.tags.map((x:any)=>String(x).slice(0,40)).slice(0,20):[],b.notes?String(b.notes).slice(0,5000):null,b.lastContactAt||null,b.nextFollowupAt||null,String(b.followupStatus||"A_FAIRE").slice(0,30)]);
+  await writeAdminAudit(req,"CRM_UPDATE",phone,{fields:Object.keys(b)}); res.json({success:true});
+});
+
+app.post("/api/admin/crm/contact", requireAdminAuth, async (req:any,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const b=req.body||{}; const phone=normalizePhone(b.phone); if(!phone)return res.status(400).json({success:false,message:"Téléphone requis."});
+  await pool.query("INSERT INTO contact_events(phone,channel,event_type,subject,notes,admin_phone) VALUES($1,$2,$3,$4,$5,$6)",[phone,String(b.channel||"WHATSAPP").slice(0,30),String(b.eventType||"CONTACT").slice(0,50),b.subject?String(b.subject).slice(0,300):null,b.notes?String(b.notes).slice(0,5000):null,req.session?.phone||"admin-secret"]);
+  await pool.query("INSERT INTO customer_profiles(phone,last_contact_at,followup_status) VALUES($1,CURRENT_TIMESTAMP,'FAIT') ON CONFLICT(phone) DO UPDATE SET last_contact_at=CURRENT_TIMESTAMP,followup_status='FAIT',updated_at=CURRENT_TIMESTAMP",[phone]);
+  await writeAdminAudit(req,"CRM_CONTACT",phone,{channel:b.channel||"WHATSAPP",eventType:b.eventType||"CONTACT"}); res.json({success:true});
+});
+
+app.get("/api/admin/crm/contacts/:phone", requireAdminAuth, async (req,res) => {
+  if (!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const phone=normalizePhone(decodeURIComponent(req.params.phone)); const {rows}=await pool.query("SELECT id,channel,event_type,subject,notes,admin_phone,created_at FROM contact_events WHERE phone=$1 ORDER BY created_at DESC LIMIT 100",[phone]); res.json({success:true,events:rows});
+});
+app.get("/api/admin/crm/campaigns", requireAdminAuth, async (req,res) => { if(!pool)return res.status(503).json({success:false,message:"Service indisponible."}); const {rows}=await pool.query("SELECT * FROM crm_campaigns ORDER BY created_at DESC LIMIT 100"); res.json({success:true,campaigns:rows}); });
+app.post("/api/admin/crm/campaigns", requireAdminAuth, async (req:any,res) => { if(!pool)return res.status(503).json({success:false,message:"Service indisponible."}); const b=req.body||{}; if(!b.name||!b.message)return res.status(400).json({success:false,message:"Nom et message requis."}); const {rows}=await pool.query("INSERT INTO crm_campaigns(name,channel,message,status,scheduled_at) VALUES($1,$2,$3,$4,$5) RETURNING *",[String(b.name).slice(0,200),String(b.channel||"WHATSAPP").slice(0,30),String(b.message).slice(0,10000),String(b.status||"BROUILLON").slice(0,30),b.scheduledAt||null]); await writeAdminAudit(req,"CAMPAIGN_CREATE",String(rows[0].id),{name:b.name,channel:b.channel}); res.status(201).json({success:true,campaign:rows[0]}); });
+app.get("/api/admin/crm/audit", requireAdminAuth, async (req,res) => { if(!pool)return res.status(503).json({success:false,message:"Service indisponible."}); const {rows}=await pool.query("SELECT id,admin_phone,action,target,details,created_at FROM admin_audit_logs ORDER BY created_at DESC LIMIT 200"); res.json({success:true,logs:rows}); });
+
 
 // ═══════════════════════════════════════════════════════════════════════
 // MOTEUR JURIDIQUE — diagnostic pénal, recherche, dossiers, documents
@@ -594,6 +989,7 @@ app.post("/api/diagnostic/penal", requireAuth, resolveUserId, async (req: any, r
     if (!description || description.trim().length < 10) {
       return res.status(400).json({ success: false, message: "La description doit contenir au moins 10 caractères." });
     }
+    if (dossier_id) { const owner = await pool!.query("SELECT id FROM dossiers WHERE id = $1 AND user_id = $2", [dossier_id, req.user.userId]); if (owner.rows.length === 0) return res.status(404).json({ success: false, message: "Dossier introuvable ou accès refusé." }); }
     const diagResult = await pool!.query(
       `INSERT INTO diagnostic_results (user_id, dossier_id, diagnostic_type, input_description, input_answers, confidence_level)
        VALUES ($1, $2, 'PENAL', $3, '{}', 'INITIAL') RETURNING id`,
@@ -719,6 +1115,125 @@ app.get("/api/diagnostic/user/history", requireAuth, resolveUserId, async (req: 
     [req.user.userId]
   );
   res.json({ success: true, diagnostics: result.rows });
+});
+
+// --- DIAGNOSTIC DROIT DU TRAVAIL ---
+// Module distinct du diagnostic pénal : il s'appuie exclusivement sur le corpus Code du Travail
+// ivoirien chargé par server/workCode.ts et rappelle son statut de référentiel à valider.
+app.post("/api/diagnostic/travail", requireAuth, resolveUserId, async (req: any, res) => {
+  try {
+    const { description, dossier_id } = req.body || {};
+    if (!description || String(description).trim().length < 10) {
+      return res.status(400).json({ success: false, message: "La description doit contenir au moins 10 caractères." });
+    }
+    if (dossier_id) {
+      const owner = await pool!.query("SELECT id FROM dossiers WHERE id = $1 AND user_id = $2", [dossier_id, req.user.userId]);
+      if (!owner.rows.length) return res.status(404).json({ success: false, message: "Dossier introuvable ou accès refusé." });
+    }
+
+    const search = await searchWorkCode(String(description), 8);
+    const context = search.results.map((a: any) => "Article " + a.article + "\n" + a.text.slice(0, 1800)).join("\n\n");
+    const inserted = await pool!.query(
+      `INSERT INTO diagnostic_results (user_id, dossier_id, diagnostic_type, input_description, input_answers, confidence_level)
+       VALUES ($1, $2, 'TRAVAIL', $3, '{}', 'INITIAL') RETURNING id`,
+      [req.user.userId, dossier_id || null, description]
+    );
+
+    const prompt = `Tu es JurisCoach, assistant documentaire en droit du travail ivoirien.
+Situation de l'utilisateur :
+"${description}"
+
+Extraits retrouvés dans le Code du Travail ivoirien :
+${context || "Aucun extrait pertinent retrouvé."}
+
+Génère exactement 6 questions de clarification en JSON.
+Règles :
+- Les questions doivent servir à établir les faits, la procédure et les pièces utiles.
+- Ne crée aucune règle de droit.
+- Ne présente pas une hypothèse comme un fait.
+- Si les extraits sont insuffisants, pose des questions factuelles sans inventer.
+Format :
+{"questions":[{"id":1,"question":"...","field_name":"...","type":"radio|text","options":["..."]}]}`;
+
+    let data: any;
+    try { data = extractJson(await generateWithFallback(prompt)); }
+    catch {
+      data = { questions: [
+        { id:1, question:"Quel est votre statut dans la relation de travail ?", field_name:"party_status", type:"radio", options:["Salarié","Employeur","Autre"] },
+        { id:2, question:"Existe-t-il un contrat de travail écrit ?", field_name:"written_contract", type:"radio", options:["Oui","Non","Je ne sais pas"] },
+        { id:3, question:"Quel est le principal problème rencontré ?", field_name:"issue", type:"text", options:[] },
+        { id:4, question:"À quelle date les faits principaux ont-ils commencé ?", field_name:"date", type:"text", options:[] },
+        { id:5, question:"Disposez-vous de documents ou preuves ?", field_name:"evidence", type:"radio", options:["Oui","Non","Partiellement"] },
+        { id:6, question:"Une démarche a-t-elle déjà été engagée auprès de l'employeur ou de l'inspection du travail ?", field_name:"prior_step", type:"radio", options:["Oui","Non","Je ne sais pas"] }
+      ]};
+    }
+    await pool!.query("UPDATE diagnostic_results SET input_answers=$1 WHERE id=$2", [JSON.stringify({ question_set: data.questions }), inserted.rows[0].id]);
+    res.status(201).json({ success:true, diagnostic_id:inserted.rows[0].id, stage:"questions", current_question_set:data.questions, source:WORK_CODE_SOURCE, validation_status:WORK_CODE_SOURCE.validationStatus });
+  } catch (err:any) {
+    console.error("[Diagnostic Travail] Erreur:", err.message);
+    res.status(503).json({ success:false, message:"Le référentiel du Code du Travail est indisponible ou l'analyse n'a pas pu démarrer.", detail:err.message });
+  }
+});
+
+app.post("/api/diagnostic/travail/analyze", requireAuth, resolveUserId, async (req: any, res) => {
+  try {
+    const { diagnostic_id, answers } = req.body || {};
+    if (!diagnostic_id || !answers) return res.status(400).json({ success:false, message:"diagnostic_id et answers requis." });
+    const found = await pool!.query("SELECT * FROM diagnostic_results WHERE id=$1 AND user_id=$2 AND diagnostic_type='TRAVAIL'", [diagnostic_id, req.user.userId]);
+    if (!found.rows.length) return res.status(404).json({ success:false, message:"Diagnostic travail introuvable." });
+    const diagnostic = found.rows[0];
+
+    const searchText = [diagnostic.input_description, JSON.stringify(answers)].join(" ");
+    const search = await searchWorkCode(searchText, 12);
+    const excerpts = search.results.map((a:any)=>({article:a.article, text:a.text.slice(0,2200)}));
+    const prompt = `Tu es JurisCoach, assistant documentaire en droit du travail ivoirien.
+
+SITUATION :
+${diagnostic.input_description}
+
+RÉPONSES :
+${JSON.stringify(answers, null, 2)}
+
+SOURCES RETROUVÉES DANS LE CODE DU TRAVAIL :
+${JSON.stringify(excerpts, null, 2)}
+
+Produis uniquement un JSON.
+Règles impératives :
+1. Utilise uniquement les extraits fournis comme base juridique.
+2. N'invente aucun article, délai, compétence, formalité ou sanction.
+3. Si une information n'est pas établie, indique-la dans missing_information.
+4. Distingue les faits rapportés, les dispositions retrouvées et les points à vérifier.
+5. Ne rends aucune décision et ne prédis pas l'issue d'un litige.
+6. Pour chaque disposition citée, donne le numéro d'article et un court extrait fidèle.
+7. Signale que le référentiel doit être validé par le Tribunal avant usage institutionnel.
+
+Format :
+{"qualification":"...","confidence_level":"HAUTE|MODÉRÉE|FAIBLE","facts_to_verify":["..."],"applicable_articles":[{"article_number":"...","title":"...","text":"..."}],"procedure_steps":["..."],"documents_needed":["..."],"missing_information":["..."],"warnings":["..."],"source_status":"A_VALIDER_PAR_LE_TRIBUNAL"}`;
+
+    let result:any;
+    try { result=extractJson(await generateWithFallback(prompt)); }
+    catch {
+      result={
+        qualification:"Analyse documentaire à compléter",
+        confidence_level:"FAIBLE",
+        facts_to_verify:[],
+        applicable_articles:excerpts.map((x:any)=>({article_number:x.article,title:"Disposition retrouvée dans le Code du Travail",text:x.text})),
+        procedure_steps:[],
+        documents_needed:[],
+        missing_information:["L'analyse automatique n'a pas pu être finalisée."],
+        warnings:["Vérification humaine nécessaire avant toute utilisation institutionnelle."],
+        source_status:"A_VALIDER_PAR_LE_TRIBUNAL"
+      };
+    }
+    await pool!.query(
+      `UPDATE diagnostic_results SET input_answers=$1, primary_qualification=$2, confidence_level=$3, applicable_texts=$4, evidence_needed=$5, missing_information=$6, explanation_sources=$7 WHERE id=$8`,
+      [JSON.stringify(answers), result.qualification, result.confidence_level, JSON.stringify(result.applicable_articles||[]), JSON.stringify(result.documents_needed||[]), JSON.stringify(result.missing_information||[]), JSON.stringify({facts_to_verify:result.facts_to_verify||[],warnings:result.warnings||[],source_status:result.source_status}), diagnostic_id]
+    );
+    res.json({success:true, diagnostic_id, stage:"results", ...result, source:WORK_CODE_SOURCE});
+  } catch(err:any) {
+    console.error("[Diagnostic Travail Analyze] Erreur:",err.message);
+    res.status(503).json({success:false,message:"Analyse droit du travail indisponible.",detail:err.message});
+  }
 });
 
 // --- RECHERCHE JURIDIQUE ---
@@ -880,9 +1395,161 @@ app.post("/api/dossiers/:id/chronology", requireAuth, resolveUserId, async (req:
 });
 
 app.get("/api/dossiers/:id/chronology", requireAuth, async (req: any, res) => {
+  const owner = await pool!.query("SELECT id FROM dossiers WHERE id = $1 AND user_id = $2", [req.params.id, req.user.userId]);
+  if (owner.rows.length === 0) return res.status(404).json({ success: false, message: "Dossier introuvable." });
   const result = await pool!.query("SELECT id, event_date, event_type, description, importance, created_at FROM dossier_chronology WHERE dossier_id = $1 ORDER BY event_date DESC", [req.params.id]);
   res.json({ success: true, chronology: result.rows });
 });
+
+// ═══════════════════════════════════════════════════════════════════════
+// DOSSIERS TRAVAIL — espace de préparation JurisCoach
+// IMPORTANT : ce module n'est pas un circuit Tribunal. Il prépare et
+// organise les informations, pièces et chronologie de l'utilisateur.
+// ═══════════════════════════════════════════════════════════════════════
+const LABOR_PREPARATION_STEPS = ["BROUILLON","PREPARATION","PRET_A_REVUE"];
+
+async function getOwnedLaborCase(req:any, dossierId:number) {
+  const result = await pool!.query(
+    `SELECT lc.id,lc.dossier_id,lc.employee_name,lc.employee_phone,lc.employee_email,
+            lc.employer_name,lc.employer_contact,lc.employment_start,lc.employment_end,
+            lc.contract_type,lc.dispute_type,lc.current_step,
+            d.dossier_number,d.title,d.description,d.created_at,d.updated_at
+     FROM labor_cases lc JOIN dossiers d ON d.id=lc.dossier_id
+     WHERE lc.dossier_id=$1 AND d.user_id=$2`,
+    [dossierId, req.user.userId]
+  );
+  return result.rows[0] || null;
+}
+
+app.post("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const b=req.body||{};
+  if(!b.title||!b.employee_name||!b.employer_name) {
+    return res.status(400).json({success:false,message:"Titre, salarié et employeur sont requis."});
+  }
+  const client=await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const dossierNumber=`TRV-${new Date().getFullYear()}-${crypto.randomBytes(3).toString("hex").toUpperCase()}`;
+    const d=await client.query(
+      `INSERT INTO dossiers(user_id,dossier_number,title,domain,description,client_name,client_phone,client_email,adversary_name,adversary_contact)
+       VALUES($1,$2,$3,'TRAVAIL',$4,$5,$6,$7,$8,$9) RETURNING id,dossier_number`,
+      [req.user.userId,dossierNumber,String(b.title).slice(0,300),b.description||null,b.employee_name,b.employee_phone||null,b.employee_email||null,b.employer_name,b.employer_contact||null]
+    );
+    const dossier=d.rows[0];
+    const labor=await client.query(
+      `INSERT INTO labor_cases(dossier_id,employee_name,employee_phone,employee_email,employer_name,employer_contact,employment_start,employment_end,contract_type,dispute_type,current_step)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'BROUILLON') RETURNING id`,
+      [dossier.id,b.employee_name,b.employee_phone||null,b.employee_email||null,b.employer_name,b.employer_contact||null,b.employment_start||null,b.employment_end||null,b.contract_type||null,b.dispute_type||null]
+    );
+    await client.query(
+      `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+       VALUES($1,'BROUILLON','Dossier créé','Préparation initiale du dossier dans JurisCoach.',CURRENT_DATE,'UTILISATEUR',$2)`,
+      [labor.rows[0].id,req.user.userId]
+    );
+    await client.query("COMMIT");
+    res.status(201).json({success:true,dossier_id:dossier.id,dossier_number:dossier.dossier_number,labor_case_id:labor.rows[0].id});
+  } catch(err:any) {
+    await client.query("ROLLBACK");
+    console.error("[Travail] création:",err.message);
+    res.status(500).json({success:false,message:"Création du dossier de préparation impossible."});
+  } finally { client.release(); }
+});
+
+app.get("/api/travail/dossiers", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const {rows}=await pool.query(
+    `SELECT lc.id,lc.dossier_id,d.dossier_number,d.title,lc.employee_name,lc.employer_name,lc.current_step,lc.created_at
+     FROM labor_cases lc JOIN dossiers d ON d.id=lc.dossier_id
+     WHERE d.user_id=$1 ORDER BY lc.created_at DESC LIMIT 100`,
+    [req.user.userId]
+  );
+  res.json({success:true,cases:rows});
+});
+
+app.get("/api/travail/dossiers/:id", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
+  const [events,documents]=await Promise.all([
+    pool.query(`SELECT id,status,title,description,event_date,created_at FROM labor_case_events WHERE labor_case_id=$1 ORDER BY event_date ASC,created_at ASC`,[c.id]),
+    pool.query(`SELECT id,document_type,document_name,required,received,mime_type,file_size,uploaded_at FROM labor_case_documents WHERE labor_case_id=$1 ORDER BY uploaded_at DESC`,[c.id])
+  ]);
+  res.json({success:true,...c,events:events.rows,documents:documents.rows});
+});
+
+app.post("/api/travail/dossiers/:id/events", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
+  const b=req.body||{};
+  const title=String(b.title||"").trim();
+  if(!title||!b.event_date) return res.status(400).json({success:false,message:"Titre et date de l'événement requis."});
+  const status=c.current_step==="BROUILLON"?"BROUILLON":"PREPARATION";
+  await pool!.query(
+    `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+     VALUES($1,$2,$3,$4,$5,'UTILISATEUR',$6)`,
+    [c.id,status,title.slice(0,250),b.description?String(b.description).slice(0,5000):null,b.event_date,req.user.userId]
+  );
+  if(c.current_step==="BROUILLON"){
+    await pool!.query(`UPDATE labor_cases SET current_step='PREPARATION',updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
+  } else {
+    await pool!.query(`UPDATE labor_cases SET updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
+  }
+  res.status(201).json({success:true});
+});
+
+app.post("/api/travail/dossiers/:id/documents", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
+  const b=req.body||{};
+  if(!b.document_name||!b.document_type) return res.status(400).json({success:false,message:"Type et nom de pièce requis."});
+  let data:null|Buffer=null;
+  if(b.content_base64){
+    try { data=Buffer.from(String(b.content_base64),"base64"); }
+    catch { return res.status(400).json({success:false,message:"Fichier invalide."}); }
+    if(data.length>10*1024*1024) return res.status(413).json({success:false,message:"Fichier trop volumineux (10 Mo maximum)."});
+  }
+  const {rows}=await pool!.query(
+    `INSERT INTO labor_case_documents(labor_case_id,document_type,document_name,required,received,file_data,mime_type,file_size)
+     VALUES($1,$2,$3,$4,true,$5,$6,$7) RETURNING id`,
+    [c.id,String(b.document_type).slice(0,100),String(b.document_name).slice(0,300),b.required===true,data,b.mime_type?String(b.mime_type).slice(0,120):null,data?.length||Number(b.file_size)||null]
+  );
+  await pool!.query(`UPDATE labor_cases SET current_step=CASE WHEN current_step='BROUILLON' THEN 'PREPARATION' ELSE current_step END,updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
+  res.status(201).json({success:true,document_id:rows[0].id});
+});
+
+app.get("/api/travail/dossiers/:id/documents/:documentId", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
+  const {rows}=await pool.query(
+    `SELECT id,document_name,document_type,mime_type,file_size,file_data FROM labor_case_documents WHERE id=$1 AND labor_case_id=$2`,
+    [req.params.documentId,c.id]
+  );
+  if(!rows.length||!rows[0].file_data) return res.status(404).json({success:false,message:"Fichier introuvable."});
+  res.setHeader("Content-Type",rows[0].mime_type||"application/octet-stream");
+  res.setHeader("Content-Disposition",`inline; filename="${String(rows[0].document_name).replace(/["\\\\]/g,"_")}"`);
+  res.send(rows[0].file_data);
+});
+
+app.post("/api/travail/dossiers/:id/prepare", requireAuth, resolveUserId, async (req:any,res:any) => {
+  if(!pool) return res.status(503).json({success:false,message:"Service indisponible."});
+  const c=await getOwnedLaborCase(req,Number(req.params.id));
+  if(!c) return res.status(404).json({success:false,message:"Dossier de préparation introuvable."});
+  await pool!.query(`UPDATE labor_cases SET current_step='PRET_A_REVUE',updated_at=CURRENT_TIMESTAMP WHERE id=$1`,[c.id]);
+  await pool!.query(
+    `INSERT INTO labor_case_events(labor_case_id,status,title,description,event_date,actor_role,created_by_user_id)
+     VALUES($1,'PRET_A_REVUE','Préparation marquée comme prête','Le dossier est prêt pour une revue par l’utilisateur ou son conseil.',CURRENT_DATE,'UTILISATEUR',$2)`,
+    [c.id,req.user.userId]
+  );
+  res.json({success:true,current_step:"PRET_A_REVUE"});
+});
+
+// Aucun endpoint de "soumission au Greffe" ou de changement de statut judiciaire
+// n'existe dans JurisCoach. Une éventuelle saisine électronique relève d'e-Travail
+// et des procédures institutionnelles applicables.
 
 // --- GÉNÉRATION DE DOCUMENTS ---
 
@@ -1826,13 +2493,14 @@ Produis un document professionnel en HTML prêt à être converti. N'invente pas
 });
 
 app.get("/api/documents/:id", requireAuth, async (req: any, res) => {
-  const result = await pool!.query("SELECT * FROM generated_documents WHERE id = $1", [req.params.id]);
+  const result = await pool!.query("SELECT gd.* FROM generated_documents gd JOIN dossiers d ON d.id = gd.dossier_id WHERE gd.id = $1 AND d.user_id = $2", [req.params.id, req.user.userId]);
   if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Document introuvable." });
   res.json({ success: true, ...result.rows[0] });
 });
 
 app.delete("/api/documents/:id", requireAuth, async (req: any, res) => {
-  await pool!.query("DELETE FROM generated_documents WHERE id = $1", [req.params.id]);
+  const result = await pool!.query("DELETE FROM generated_documents gd USING dossiers d WHERE gd.id = $1 AND gd.dossier_id = d.id AND d.user_id = $2 RETURNING gd.id", [req.params.id, req.user.userId]);
+  if (result.rows.length === 0) return res.status(404).json({ success: false, message: "Document introuvable." });
   res.json({ success: true, message: "Document supprimé." });
 });
 
@@ -1910,27 +2578,62 @@ async function startServer() {
       );
     } catch (e: any) { console.error("[LiveMemory] Erreur sauvegarde:", e.message); }
   }
+  const liveWsTickets = new Map<string, { phone: string; expiresAt: number; mode: "pro" | "sponsored"; sessionId?: string }>();
   const wss = new WebSocketServer({ noServer: true });
+  // Ticket Live à usage unique : évite d'exposer le bearer token permanent dans l'URL WebSocket.
+  app.post("/api/live-ticket", requireAuth, async (req: any, res: any) => {
+    const mode = req.body?.mode === "sponsored" ? "sponsored" : "pro";
+    const acc = userAccounts.get(req.session.phone);
+    if (mode === "pro" && !acc?.isPro) return res.status(403).json({ success: false, message: "Fonctionnalité réservée aux comptes Pro." });
+    if (mode === "sponsored" && pool) {
+      const sessionId = String(req.body?.sessionId || "");
+      const { rows } = await pool.query(
+        "SELECT status, challenge_verified, ends_at FROM sponsored_sessions WHERE id=$1 AND phone=$2",
+        [sessionId, req.session.phone]
+      );
+      if (!rows.length || !rows[0].challenge_verified) return res.status(403).json({success:false,message:"Validez d'abord la publicité sponsorisée."});
+      if (rows[0].status === "consulting" && rows[0].ends_at && new Date(rows[0].ends_at).getTime() <= Date.now()) return res.status(403).json({success:false,message:"La session sponsorisée est expirée."});
+    }
+    const ticket = crypto.randomBytes(24).toString("hex");
+    liveWsTickets.set(ticket, { phone: req.session.phone, expiresAt: Date.now() + 60 * 1000, mode, sessionId: mode === "sponsored" ? String(req.body?.sessionId || "") : undefined } as any);
+    res.json({ success: true, ticket });
+  });
 
-  server.on("upgrade", (request, socket, head) => {
+  server.on("upgrade", async (request, socket, head) => {
     const { pathname, searchParams } = new URL(request.url || "", `http://${request.headers.host}`);
     if (pathname === "/api/live-ws") {
-      const token = searchParams.get("token") || "";
-      const session = sessions.get(token);
-      if (!token || !session) {
+      const ticket = searchParams.get("ticket") || "";
+      const ticketData = liveWsTickets.get(ticket);
+      if (!ticket || !ticketData || Date.now() > ticketData.expiresAt) {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
         return;
       }
+      liveWsTickets.delete(ticket);
+      const session = { phone: ticketData.phone, createdAt: Date.now() };
       const acc = userAccounts.get(session.phone);
-      if (!acc?.isPro) {
+      const mode = ticketData.mode;
+      if (mode === "pro" && !acc?.isPro) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
       }
+      if (mode === "sponsored" && ticketData.sessionId && pool) {
+        const { rows } = await pool.query(
+          "SELECT status, consultation_started_at, ends_at FROM sponsored_sessions WHERE id=$1 AND phone=$2 AND challenge_verified=true",
+          [ticketData.sessionId, session.phone]
+        );
+        if (!rows.length || !["ready","consulting"].includes(rows[0].status) || (rows[0].status === "consulting" && (!rows[0].ends_at || new Date(rows[0].ends_at).getTime() <= Date.now()))) {
+          socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+      }
       wss.handleUpgrade(request, socket, head, (ws) => {
         // Attacher phone à la connexion pour la mémoire
         (ws as any).__phone = session.phone;
+        (ws as any).__mode = mode;
+        (ws as any).__sponsoredSessionId = ticketData.sessionId;
         wss.emit("connection", ws, request);
       });
     }
@@ -1943,6 +2646,41 @@ async function startServer() {
     const userPhone: string = (clientWs as any).__phone || "";
     const sessionTranscript: { role: "user" | "assistant"; text: string; ts: number }[] = [];
     if (userPhone) liveSessionTranscripts.set(userPhone, sessionTranscript);
+    const liveMode: "pro" | "sponsored" = (clientWs as any).__mode || "pro";
+    const sponsoredSessionId: string | undefined = (clientWs as any).__sponsoredSessionId;
+    let sponsoredTimerStarted = false;
+    let sponsoredEnding = false;
+    let sponsoredWarningTimer: NodeJS.Timeout | null = null;
+    let sponsoredEndTimer: NodeJS.Timeout | null = null;
+    let sponsoredGraceTimer: NodeJS.Timeout | null = null;
+
+    const startSponsoredTimer = async () => {
+      if (liveMode !== "sponsored" || !sponsoredSessionId || sponsoredTimerStarted || !pool) return;
+      sponsoredTimerStarted = true;
+      const now = new Date();
+      const end = new Date(now.getTime() + 180000);
+      await pool.query(
+        "UPDATE sponsored_sessions SET status='consulting', consultation_started_at=$2, ends_at=$3 WHERE id=$1 AND phone=$4 AND challenge_verified=true",
+        [sponsoredSessionId, now, end, userPhone]
+      );
+      clientWs.send(JSON.stringify({ type:"consultationStarted", durationSeconds:180, endsAt:end.toISOString() }));
+      sponsoredWarningTimer = setTimeout(() => {
+        if (!isClosed) clientWs.send(JSON.stringify({ type:"subscriptionWarning", secondsRemaining:10 }));
+      }, 170000);
+      sponsoredEndTimer = setTimeout(() => {
+        if (isClosed || sponsoredEnding) return;
+        sponsoredEnding = true;
+        clientWs.send(JSON.stringify({ type:"consultationEnding" }));
+        if (geminiSession) {
+          try {
+            geminiSession.sendClientContent({ turns:[{ role:"user", parts:[{ text:"La session sponsorisée arrive à son terme. Termine naturellement ta réponse en cours, puis indique brièvement que la session de 3 minutes est terminée et que l'utilisateur peut appeler ou écrire au 0707312797 pour poursuivre avec JurisCoach." }]}] });
+          } catch {}
+        }
+        sponsoredGraceTimer = setTimeout(() => {
+          if (!isClosed) { try { clientWs.close(); } catch {} }
+        }, 10000);
+      }, 180000);
+    };
 
     clientWs.on("message", async (data) => {
       try {
@@ -1987,7 +2725,7 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
                 },
               },
               callbacks: {
-                onmessage: (msg: any) => {
+                onmessage: async (msg: any) => {
                   if (isClosed) return;
                   const modelParts = msg.serverContent?.modelTurn?.parts;
                   if (modelParts && Array.isArray(modelParts)) {
@@ -2005,6 +2743,9 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
                       if (part.text) {
                       clientWs.send(JSON.stringify({ type: "userTranscript", text: part.text }));
                       sessionTranscript.push({ role: "user", text: part.text, ts: Date.now() });
+                      if (liveMode === "sponsored" && !sponsoredTimerStarted && !sponsoredEnding) {
+                        await startSponsoredTimer();
+                      }
                     }
                     }
                   }
@@ -2048,6 +2789,12 @@ FORMATAGE VOCAL STRICT : Ne génère aucun caractère markdown (pas d'astérisqu
     clientWs.on("close", async () => {
       console.log("[WebSocket] Client déconnecté du bridge vocal Live.");
       isClosed = true;
+      if (sponsoredWarningTimer) clearTimeout(sponsoredWarningTimer);
+      if (sponsoredEndTimer) clearTimeout(sponsoredEndTimer);
+      if (sponsoredGraceTimer) clearTimeout(sponsoredGraceTimer);
+      if (sponsoredSessionId && pool && liveMode === "sponsored") {
+        await pool.query("UPDATE sponsored_sessions SET status='completed', completed_at=CURRENT_TIMESTAMP WHERE id=$1 AND phone=$2 AND status IN ('consulting','ready')", [sponsoredSessionId, userPhone]).catch(() => {});
+      }
       if (geminiSession) { try { geminiSession.close(); } catch (e) {} }
       // Sauvegarder le résumé de la session en DB
       if (userPhone && sessionTranscript.length > 1) {
