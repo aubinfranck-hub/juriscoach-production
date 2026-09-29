@@ -1034,6 +1034,56 @@ Focus sur: infraction probable, auteur, victime, élément constitutif, intentio
   }
 });
 
+const FR_STOPWORDS = new Set(("alors aucun aussi autre avant avec avoir bien cela celui cette ceux chaque comme comment dans dans depuis donc dont elle elles encore entre était étaient être fait faire fois hors leur leurs lors mais même moins nous notre nous parce pendant peut plus pour pourquoi puis quand quel quelle quels sans selon sera sont sous sur tous tout toute toutes très votre vous avez suis avons ont ete etes serait aurait cette cela ainsi après ailleurs déjà chez fais dit dis veux voudrais voulait était situation question personne jour jours moment monsieur madame").split(/\s+/));
+
+function extractKeywords(text: string, max = 12): string[] {
+  const words = (text || "")
+    .toLowerCase()
+    .replace(/[^a-zàâäçéèêëîïôöùûüÿœæ0-9\s'’-]/g, " ")
+    .split(/[\s'’-]+/)
+    .filter(w => w.length >= 4 && !FR_STOPWORDS.has(w) && !/^\d+$/.test(w));
+  return Array.from(new Set(words)).slice(0, max);
+}
+
+// Détecte le thème pour ne chercher que dans les codes concernés.
+function detectPenalDomains(text: string): string[] {
+  const t = (text || "").toLowerCase();
+  const domains = ["PENAL"];
+  if (/fouill|perquisition|contr[ôo]le d.?identit|garde à vue|garde a vue|arrest|interpell|policier|gendarme|commissariat|saisie|d[ée]f[èe]rement|d[ée]tention provisoire|mandat/.test(t)) {
+    domains.push("PROCEDURE_PENALE", "PROCEDURE_PENAL", "PROCEDURE");
+  }
+  return domains;
+}
+
+// Recherche plein texte (français) + seuil de pertinence : on préfère renvoyer 0 article plutôt qu'un article hors sujet.
+async function retrieveRelevantArticles(text: string, domains: string[], limit = 5): Promise<any[]> {
+  const keywords = extractKeywords(text);
+  if (keywords.length === 0 || !pool) return [];
+  const tsQuery = keywords.map(k => k.replace(/[^a-zàâäçéèêëîïôöùûüÿœæ0-9]/g, "")).filter(Boolean).join(" | ");
+  if (!tsQuery) return [];
+  const docExpr = `to_tsvector('french', coalesce(title,'') || ' ' || coalesce(infraction,'') || ' ' || coalesce(official_text,''))`;
+  const { rows } = await pool.query(
+    `SELECT id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa,
+            ts_rank_cd(${docExpr}, to_tsquery('french', $1)) AS score
+     FROM legal_articles
+     WHERE domain = ANY($2) AND ${docExpr} @@ to_tsquery('french', $1)
+     ORDER BY score DESC
+     LIMIT 25`,
+    [tsQuery, domains]
+  );
+  // Seuil : au moins 2 mots-clés distincts de la situation présents dans l'article (1 si la situation est très courte).
+  const minHits = keywords.length >= 3 ? 2 : 1;
+  return rows
+    .map((r: any) => {
+      const hay = `${r.title || ""} ${r.infraction || ""} ${r.official_text || ""}`.toLowerCase();
+      const hits = keywords.filter(k => hay.includes(k.slice(0, Math.max(5, k.length - 2)))).length;
+      return { ...r, hits };
+    })
+    .filter((r: any) => r.hits >= minHits)
+    .sort((a: any, b: any) => b.hits - a.hits || b.score - a.score)
+    .slice(0, limit);
+}
+
 app.post("/api/diagnostic/penal/analyze", requireAuth, resolveUserId, async (req: any, res) => {
   try {
     const { diagnostic_id, answers } = req.body;
@@ -1047,15 +1097,14 @@ app.post("/api/diagnostic/penal/analyze", requireAuth, resolveUserId, async (req
     if (diagResult.rows.length === 0) return res.status(404).json({ success: false, message: "Diagnostic introuvable." });
     const diagnostic = diagResult.rows[0];
 
-    const articlesResult = await pool!.query(
-      `SELECT id, article_number, title, official_text, domain, infraction, min_sentence_years, max_sentence_years, fine_min_fcfa, fine_max_fcfa
-       FROM legal_articles
-       WHERE domain = 'PENAL'
-       AND (official_text ILIKE '%confiance%' OR official_text ILIKE '%détournement%' OR official_text ILIKE '%escroquerie%')
-       LIMIT 5`
-    );
-    const articlesContext = articlesResult.rows.map((art: any) =>
-      `\nArt. ${art.article_number}: ${art.title}\n${(art.official_text || "").substring(0, 300)}...\nPeines: ${art.min_sentence_years}-${art.max_sentence_years} ans, Amende: ${art.fine_min_fcfa}-${art.fine_max_fcfa} FCFA`
+    // Recherche dynamique : la situation décrite + les réponses guident le choix des articles,
+    // avec seuil de pertinence (jamais d'articles "au hasard").
+    const searchText = `${diagnostic.input_description || ""} ${typeof answers === "string" ? answers : JSON.stringify(answers)}`;
+    const searchDomains = detectPenalDomains(searchText);
+    const relevantArticles = await retrieveRelevantArticles(searchText, searchDomains, 5);
+    const noRelevantSource = relevantArticles.length === 0;
+    const articlesContext = relevantArticles.map((art: any) =>
+      `\nArt. ${art.article_number}: ${art.title}\n${(art.official_text || "").substring(0, 300)}...\nPeines: ${art.min_sentence_years ?? "?"}-${art.max_sentence_years ?? "?"} ans, Amende: ${art.fine_min_fcfa ?? "?"}-${art.fine_max_fcfa ?? "?"} FCFA`
     ).join("\n");
 
     const prompt = `Tu es JurisCoach. Génère un diagnostic pénal précis basé sur:
@@ -1066,11 +1115,14 @@ SITUATION:
 RÉPONSES:
 ${JSON.stringify(answers, null, 2)}
 
-ARTICLES APPLICABLES (base de données — peut être vide si non encore alimentée):
-${articlesContext || "Aucun article correspondant trouvé en base pour l'instant."}
+ARTICLES CANDIDATS (base de données — peut être vide si la base ne couvre pas le sujet):
+${articlesContext || "AUCUN article pertinent trouvé en base pour cette situation."}
 
-RÈGLES:
-- N'invente JAMAIS un article. Si la base ne contient pas d'article pertinent, dis-le clairement plutôt que d'en inventer un.
+RÈGLES STRICTES:
+- N'invente JAMAIS un article. Ne cite un article que s'il figure dans la liste ci-dessus ET traite DIRECTEMENT de la situation décrite.
+- Un article sur un sujet voisin mais différent (ex. escroquerie pour une question de fouille policière) doit être IGNORÉ, jamais cité.
+- Si aucun article ne convient : "applicable_articles" doit être [], "confidence_level" = "BASSE", et "missing_information" doit nommer précisément le texte manquant (ex. Code de procédure pénale : fouilles, contrôles d'identité, perquisitions).
+- Ne qualifie pas une infraction sans article de base correspondant : indique que la qualification est impossible avec les sources disponibles.
 - Chaque conclusion doit citer une source réelle (base de données) ou indiquer l'absence de source.
 - Si données insuffisantes, dis "Je ne sais pas" et liste les manques.
 - Produis un JSON structuré.
@@ -1080,6 +1132,21 @@ JSON REQUIS:
 
     const response = await generateWithFallback(prompt);
     const diagnosisData = extractJson(response || "");
+
+    // Garde-fou : on ne garde que les articles réellement issus de la base ET jugés pertinents.
+    const allowedNumbers = new Set(relevantArticles.map((a: any) => String(a.article_number).trim().toLowerCase()));
+    diagnosisData.applicable_articles = (Array.isArray(diagnosisData.applicable_articles) ? diagnosisData.applicable_articles : [])
+      .filter((a: any) => allowedNumbers.has(String(a?.article_number ?? "").trim().toLowerCase()));
+    if (noRelevantSource || diagnosisData.applicable_articles.length === 0) {
+      diagnosisData.applicable_articles = [];
+      diagnosisData.confidence_level = "BASSE";
+      diagnosisData.pertinence_score = Math.min(Number(diagnosisData.pertinence_score) || 0, 20);
+      diagnosisData.no_relevant_source = true;
+      const missing: string[] = Array.isArray(diagnosisData.missing_information) ? diagnosisData.missing_information : [];
+      const note = "Aucun texte pertinent trouvé dans la base pour cette situation : l'analyse ne peut pas s'appuyer sur une source vérifiée.";
+      if (!missing.includes(note)) missing.unshift(note);
+      diagnosisData.missing_information = missing;
+    }
 
     await pool!.query(
       `UPDATE diagnostic_results SET input_answers=$1, primary_qualification=$2, secondary_qualifications=$3,
