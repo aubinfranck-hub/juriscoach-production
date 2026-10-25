@@ -1,4 +1,5 @@
 ﻿import express from "express";
+import { createHash as _sha, timingSafeEqual as _tse } from "node:crypto";
 import { WebSocketServer } from "ws";
 import cors from "cors";
 import pg from "pg";
@@ -22,6 +23,9 @@ const pool = process.env.DATABASE_URL
       idleTimeoutMillis: 30000,
     })
   : null;
+// Une connexion inactive coupée (redémarrage de la base, coupure réseau) émet un événement « error » :
+// sans écouteur, Node plante tout le serveur.
+pool?.on("error", (err) => console.error("[DB] Connexion inactive perdue (le pool se reconnecte seul) :", err.message));
 
 // Normalise un numéro de téléphone (retire espaces/tirets/parenthèses) pour qu'il soit
 // TOUJOURS identique, qu'il soit saisi avec espaces ou copié-collé depuis un endroit différent.
@@ -118,9 +122,24 @@ async function resolveUserId(req: any, res: any, next: any) {
   }
 }
 
+// Comparaison en temps constant du code admin + blocage après 10 échecs / 15 min par IP.
+const adminFailures = new Map<string, { count: number; start: number }>();
+function adminCodeMatches(code: unknown, ip: string): boolean {
+  const secret = process.env.ADMIN_SECRET;
+  if (!secret || typeof code !== "string" || !code) return false;
+  const now = Date.now();
+  const f = adminFailures.get(ip);
+  if (f && now - f.start <= 15 * 60 * 1000 && f.count >= 10) return false;
+  const ok = _tse(_sha("sha256").update(code).digest(), _sha("sha256").update(secret).digest());
+  if (ok) { adminFailures.delete(ip); return true; }
+  if (!f || now - f.start > 15 * 60 * 1000) adminFailures.set(ip, { count: 1, start: now });
+  else f.count += 1;
+  return false;
+}
+
 function requireAdminAuth(req: any, res: any, next: any) {
   const code = req.headers["x-admin-code"];
-  if (code && code === process.env.ADMIN_SECRET) return next();
+  if (adminCodeMatches(code, String(req.ip || "unknown"))) return next();
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
   const session = token ? sessions.get(token) : null;
